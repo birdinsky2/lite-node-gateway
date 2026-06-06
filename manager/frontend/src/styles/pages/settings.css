@@ -1,0 +1,115 @@
+.settings-workspace {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.settings-panel {
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-proxy-card,
+.settings-form-card {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-switch-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background: linear-gradient(90deg, rgba(15, 159, 140, 0.08), rgba(37, 99, 235, 0.06));
+  border: 1px solid rgba(15, 159, 140, 0.2);
+  border-radius: var(--radius);
+}
+
+.settings-switch-card > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-switch-card strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.settings-switch-card span {
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-facts {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-facts > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.settings-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.settings-actions,
+.settings-form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-actions .el-button,
+.settings-form-actions .el-button {
+  width: 100%;
+}
+
+.settings-form {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-form .el-form-item {
+  margin-bottom: 12px;
+}
+
+.settings-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-form .el-textarea__inner {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+}

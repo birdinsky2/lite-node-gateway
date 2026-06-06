@@ -1,0 +1,40 @@
+services:
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: lite-node-gateway-mihomo
+    restart: unless-stopped
+    command: ["-f", "/root/.config/mihomo/config.yaml"]
+    volumes:
+      - ./data:/root/.config/mihomo
+    ports:
+      - "127.0.0.1:7896:7897/tcp"
+      - "127.0.0.1:7900-7999:7900-7999/tcp"
+      - "127.0.0.1:9090:9090/tcp"
+    environment:
+      TZ: Asia/Shanghai
+
+  dashboard:
+    image: ghcr.io/metacubex/metacubexd:latest
+    container_name: lite-node-gateway-dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:80/tcp"
+    depends_on:
+      - mihomo
+
+  manager:
+    build:
+      context: ./manager
+    container_name: lite-node-gateway-manager
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      GATEWAY_DATA_DIR: /data
+      MIHOMO_API_URL: http://mihomo:9090
+      MIHOMO_CONFIG_IN_CORE: /root/.config/mihomo/config.yaml
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8089:8080/tcp"
+    depends_on:
+      - mihomo

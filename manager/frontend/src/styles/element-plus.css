@@ -1,0 +1,25 @@
+﻿.el-button {
+  border-radius: 7px;
+}
+
+.el-tag {
+  border-radius: 999px;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-input-number .el-input__wrapper,
+.el-select__wrapper {
+  border-radius: 7px;
+}
+
+.el-form-item__label {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.el-empty {
+  min-height: 220px;
+}
+

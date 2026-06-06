@@ -1,0 +1,134 @@
+﻿.subscription-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+  gap: 12px;
+}
+
+.subscription-card {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 15px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.subscription-card::before {
+  content: "";
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 3px;
+  background: transparent;
+  border-radius: 0 3px 3px 0;
+}
+
+.subscription-card:hover {
+  background: #fff;
+  border-color: var(--line-strong);
+}
+
+.subscription-card.active {
+  background: #f2fbf9;
+  border-color: rgba(15, 159, 140, 0.52);
+  box-shadow: 0 0 0 1px rgba(15, 159, 140, 0.1);
+}
+
+.subscription-card.active::before {
+  background: var(--accent);
+}
+
+.card-topline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.subscription-title {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subscription-title strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 780;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subscription-title span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.card-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.card-facts div {
+  min-width: 0;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.card-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.card-facts dd {
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.inline-error .el-icon,
+.inline-error svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.card-actions .el-button {
+  min-width: 0;
+  width: 100%;
+}
+
+.card-actions .el-button + .el-button,
+.binding-actions .el-button + .el-button {
+  margin-left: 0;
+}
+

@@ -1,0 +1,63 @@
+﻿:root {
+  color-scheme: light;
+  --page: #f4f7fb;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-tint: #eef7f5;
+  --sidebar: #111827;
+  --sidebar-soft: #1f2937;
+  --ink: #111827;
+  --ink-soft: #4b5563;
+  --muted: #7b8495;
+  --line: #e1e7ef;
+  --line-strong: #cbd5e1;
+  --accent: #0f9f8c;
+  --accent-deep: #0f766e;
+  --accent-blue: #2563eb;
+  --warning: #b7791f;
+  --danger: #c2413a;
+  --success: #138a5b;
+  --radius: 8px;
+  --shadow-sm: 0 8px 22px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 18px 44px rgba(15, 23, 42, 0.1);
+  --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --sans: "Aptos", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-family: var(--sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(90deg, rgba(17, 24, 39, 0.032) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(17, 24, 39, 0.032) 1px, transparent 1px),
+    var(--page);
+  background-size: 32px 32px;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+button,
+input,
+textarea {
+  letter-spacing: 0;
+}
+
+button {
+  font: inherit;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd {
+  margin: 0;
+}
+

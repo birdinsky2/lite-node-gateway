@@ -1,0 +1,144 @@
+﻿.overview-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.overview-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 116px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.overview-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -44px -48px auto;
+  width: 112px;
+  height: 112px;
+  border-radius: 999px;
+  background: rgba(15, 159, 140, 0.1);
+}
+
+.overview-card.accent-b::after {
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.overview-card.accent-c::after {
+  background: rgba(183, 121, 31, 0.12);
+}
+
+.overview-card span,
+.overview-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.overview-card strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 12px;
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 840;
+  line-height: 1.08;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-card small {
+  margin-top: 8px;
+}
+
+.subscription-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.import-surface,
+.subscription-main,
+.node-workbench,
+.port-compose,
+.binding-panel {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.import-surface,
+.subscription-main,
+.port-compose,
+.binding-panel {
+  padding: 16px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-heading h2 {
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.section-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.section-heading > .el-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  color: var(--accent-deep);
+  background: #eefbf8;
+  border-radius: var(--radius);
+}
+
+.section-heading.with-tools {
+  align-items: center;
+}
+
+.section-heading.compact {
+  margin-bottom: 10px;
+}
+
+.stack-form {
+  display: grid;
+  gap: 2px;
+}
+
+.stack-form .el-form-item {
+  margin-bottom: 12px;
+}
+
+.stack-form .el-button[type="button"],
+.stack-form .el-button[role="button"] {
+  width: 100%;
+}
+
+.stack-form > .el-button {
+  width: 100%;
+}
+

@@ -1,0 +1,177 @@
+﻿@media (min-width: 1560px) {
+  .node-grid {
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  }
+
+  .ports-workspace {
+    grid-template-columns: minmax(0, 1fr) 396px;
+  }
+
+  .system-proxy-workspace {
+    grid-template-columns: 380px minmax(0, 1fr);
+  }
+
+  .settings-workspace {
+    grid-template-columns: 380px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1320px) {
+  .admin-header {
+    grid-template-columns: minmax(260px, 1fr) auto;
+  }
+
+  .header-metrics {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .ports-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .system-proxy-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .node-workbench,
+  .system-proxy-node-picker {
+    min-height: 640px;
+  }
+
+  .port-side,
+  .system-proxy-panel,
+  .settings-proxy-card {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    max-height: none;
+  }
+}
+
+@media (max-width: 1060px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar {
+    position: sticky;
+    height: auto;
+    grid-template-rows: auto auto;
+    grid-template-columns: minmax(220px, auto) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .sidebar-brand {
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .sidebar-nav {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    scrollbar-width: none;
+  }
+
+  .sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-entry {
+    width: 190px;
+    flex: 0 0 auto;
+  }
+
+  .sidebar-status {
+    min-width: 180px;
+  }
+
+  .admin-header {
+    top: 80px;
+  }
+
+  .subscription-layout,
+  .overview-strip,
+  .port-side,
+  .system-proxy-panel,
+  .settings-proxy-card {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar-controls,
+  .system-toolbar-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-sidebar {
+    position: relative;
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-status {
+    display: none;
+  }
+
+  .admin-header {
+    position: relative;
+    top: 0;
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
+  }
+
+  .header-metrics,
+  .toolbar-controls,
+  .system-toolbar-controls,
+  .card-actions,
+  .binding-actions,
+  .system-proxy-actions,
+  .settings-actions,
+  .settings-form-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .content-page {
+    padding: 14px;
+  }
+
+  .card-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .node-workbench,
+  .system-proxy-node-picker {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 520px) {
+  .page-title {
+    align-items: flex-start;
+  }
+
+  .toolbar-controls,
+  .system-toolbar-controls,
+  .node-grid,
+  .card-actions,
+  .binding-actions,
+  .system-proxy-actions,
+  .settings-actions,
+  .settings-form-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
