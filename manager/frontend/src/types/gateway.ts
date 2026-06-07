@@ -60,6 +60,9 @@ export interface SystemProxyHelperState extends ApiEnvelope {
   server?: string;
   override?: string;
   status?: number;
+  supported?: boolean;
+  backend?: string;
+  platform?: string;
 }
 
 export interface SystemProxyState {

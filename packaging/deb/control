@@ -1,0 +1,10 @@
+Package: lite-node-gateway
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Lite Node Gateway <local@example.invalid>
+Depends: python3, python3-requests, python3-yaml, systemd
+Description: Lightweight local node gateway powered by mihomo
+ Lite Node Gateway provides a local Manager web UI and a mihomo core service
+ for subscription import, node selection, and fixed local proxy ports.

@@ -60,6 +60,8 @@ BACKUP_FILE = DATA_DIR / "config.yaml.before-manager"
 MIHOMO_API_URL = os.environ.get("MIHOMO_API_URL", "http://127.0.0.1:9090").rstrip("/")
 MIHOMO_SECRET = os.environ.get("MIHOMO_SECRET", "")
 MIHOMO_CONFIG_IN_CORE = os.environ.get("MIHOMO_CONFIG_IN_CORE", "/root/.config/mihomo/config.yaml")
+MIHOMO_MIXED_PORT = int(os.environ.get("MIHOMO_MIXED_PORT", "7897"))
+MIHOMO_EXTERNAL_CONTROLLER = os.environ.get("MIHOMO_EXTERNAL_CONTROLLER", "0.0.0.0:9090")
 NODE_DELAY_TEST_URL = os.environ.get("NODE_DELAY_TEST_URL", "http://www.gstatic.com/generate_204")
 NODE_DELAY_TIMEOUT_MS = int(os.environ.get("NODE_DELAY_TIMEOUT_MS", "5000"))
 NODE_DELAY_WORKERS = int(os.environ.get("NODE_DELAY_WORKERS", "8"))
@@ -869,7 +871,7 @@ def public_system_proxy(state: dict[str, Any]) -> dict[str, Any]:
     if selected_subscription_id and selected_node_id:
         selected_node = by_key.get((str(selected_subscription_id), str(selected_node_id)))
     helper = helper_status()
-    helper_enabled = bool(helper.get("enabled")) if helper.get("ok") else bool(proxy_state.get("enabled"))
+    helper_enabled = bool(helper.get("enabled")) if "enabled" in helper else bool(proxy_state.get("enabled"))
     bypass = configured_bypass_text(proxy_state, helper)
     return {
         "enabled": helper_enabled,
@@ -950,12 +952,12 @@ def build_mihomo_config(state: dict[str, Any]) -> tuple[dict[str, Any], list[dic
         resolved_bindings.append({**binding, "resolved": True, "target": target, "label": label})
 
     config = {
-        "mixed-port": 7897,
+        "mixed-port": MIHOMO_MIXED_PORT,
         "allow-lan": True,
         "bind-address": "*",
         "mode": "rule",
         "log-level": "info",
-        "external-controller": "0.0.0.0:9090",
+        "external-controller": MIHOMO_EXTERNAL_CONTROLLER,
         "secret": MIHOMO_SECRET,
         "unified-delay": True,
         "tcp-concurrent": True,
@@ -1384,9 +1386,12 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         proxy_state["updated_at"] = now_iso()
 
         current_helper = helper_status()
-        enabled = bool(current_helper.get("enabled")) if current_helper.get("ok") else bool(proxy_state.get("enabled"))
+        enabled = bool(current_helper.get("enabled")) if "enabled" in current_helper else bool(proxy_state.get("enabled"))
         helper_result = None
-        if enabled:
+        if current_helper.get("supported") is False:
+            proxy_state["enabled"] = False
+            helper_result = current_helper
+        elif enabled:
             helper_result = update_helper_system_proxy(
                 True,
                 system_proxy_server(state),

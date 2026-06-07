@@ -21,14 +21,14 @@ export const navItems: NavItem[] = [
     key: "system-proxy",
     label: "系统代理",
     desc: "本机上网开关",
-    longDesc: "选择订阅节点并控制 Windows 系统代理，让本机流量通过当前节点出口。",
+    longDesc: "选择订阅节点并控制宿主机系统代理，让本机流量通过当前节点出口。",
     icon: SwitchButton,
   },
   {
     key: "settings",
     label: "设置",
     desc: "端口与绕过",
-    longDesc: "快速开关系统代理，调整系统代理端口，并维护 Windows 代理绕过域名和 IP 规则。",
+    longDesc: "快速开关系统代理，调整系统代理端口，并维护宿主机代理绕过域名和 IP 规则。",
     icon: Setting,
   },
 ];

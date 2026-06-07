@@ -65,7 +65,7 @@
         <SectionHeading
           eyebrow="Network"
           title="端口与绕过规则"
-          description="端口用于 Windows 系统代理，绕过规则会写入 ProxyOverride。"
+          description="端口用于宿主机系统代理，绕过规则会写入当前平台代理设置。"
           :icon="Setting"
         />
 
@@ -92,7 +92,7 @@
 
           <section class="settings-hints">
             <el-tag effect="plain" type="info">一行一条</el-tag>
-            <el-tag effect="plain" type="info">保存后写入 Windows</el-tag>
+            <el-tag effect="plain" type="info">保存后写入宿主机</el-tag>
             <el-tag v-if="manager.systemProxy.value.enabled" effect="plain" type="success">当前已开启</el-tag>
           </section>
 

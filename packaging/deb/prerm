@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop lite-node-gateway-manager.service >/dev/null 2>&1 || true
+  systemctl stop lite-node-gateway-mihomo.service >/dev/null 2>&1 || true
+  systemctl disable lite-node-gateway-manager.service >/dev/null 2>&1 || true
+  systemctl disable lite-node-gateway-mihomo.service >/dev/null 2>&1 || true
+fi
+
+exit 0

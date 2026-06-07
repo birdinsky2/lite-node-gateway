@@ -112,11 +112,13 @@ export function useGatewayDerived(state: GatewayManagerState) {
   });
 
   const systemProxyStatusLabel = computed(() => {
+    if (systemProxy.value.helper.supported === false) return "系统代理后端不可用";
     if (!systemProxy.value.helper_ok) return "Helper 未连接";
     return systemProxy.value.enabled ? "系统代理已打开" : "系统代理已关闭";
   });
 
   const systemProxyStatusTone = computed<TagTone>(() => {
+    if (systemProxy.value.helper.supported === false) return "warning";
     if (!systemProxy.value.helper_ok) return "danger";
     return systemProxy.value.enabled ? "success" : "info";
   });

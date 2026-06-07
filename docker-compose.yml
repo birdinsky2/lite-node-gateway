@@ -34,6 +34,8 @@ services:
       MIHOMO_CONFIG_IN_CORE: /root/.config/mihomo/config.yaml
     volumes:
       - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8089:8080/tcp"
     depends_on:

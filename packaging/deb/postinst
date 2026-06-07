@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+if ! getent group lite-node-gateway >/dev/null; then
+  addgroup --system lite-node-gateway
+fi
+
+if ! getent passwd lite-node-gateway >/dev/null; then
+  adduser --system --ingroup lite-node-gateway --home /var/lib/lite-node-gateway --no-create-home lite-node-gateway
+fi
+
+mkdir -p /var/lib/lite-node-gateway/subscriptions /var/log/lite-node-gateway
+chown -R lite-node-gateway:lite-node-gateway /var/lib/lite-node-gateway /var/log/lite-node-gateway
+chmod 0750 /var/lib/lite-node-gateway /var/log/lite-node-gateway
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+  systemctl enable lite-node-gateway-mihomo.service >/dev/null || true
+  systemctl enable lite-node-gateway-manager.service >/dev/null || true
+  if [ "${LITE_NODE_GATEWAY_NO_START:-0}" != "1" ]; then
+    systemctl restart lite-node-gateway-mihomo.service || true
+    systemctl restart lite-node-gateway-manager.service || true
+  fi
+fi
+
+exit 0
