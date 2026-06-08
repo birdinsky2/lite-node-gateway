@@ -121,7 +121,7 @@ if (-not $SkipDocker) {
     throw "docker-compose.yml was not found: $ComposeFile"
   }
 
-  $composeArgs = @("compose", "-f", $ComposeFile, "up", "-d")
+  $composeArgs = @("compose", "-f", $ComposeFile, "up", "-d", "--remove-orphans")
   if ($Build) {
     $composeArgs += "--build"
   }
@@ -136,6 +136,5 @@ if (-not $SkipDocker) {
 Write-Host ""
 Write-Host "Ready."
 Write-Host "Manager:      http://127.0.0.1:8089"
-Write-Host "Dashboard:    http://127.0.0.1:8088"
 Write-Host "Main proxy:   http://127.0.0.1:7896"
 Write-Host "Helper:       $HelperUrl"

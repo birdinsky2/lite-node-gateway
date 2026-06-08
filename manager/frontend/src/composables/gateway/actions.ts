@@ -55,7 +55,10 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
     }
 
     if (!list.length) {
-      state.activeView.value = "subscriptions";
+      state.selectedNode.value = null;
+      state.nodes.value = [];
+      state.systemProxySelectedNode.value = null;
+      state.systemProxyNodes.value = [];
     }
   }
 
@@ -165,7 +168,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
   }
 
   async function openSubscriptionNodes(subscriptionId: string) {
-    state.activeView.value = "ports";
+    state.activeView.value = "nodes";
     await selectSubscription(subscriptionId);
   }
 
@@ -256,7 +259,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
     const url = state.subscriptionForm.url.trim();
     if (!url) {
       ElMessage.warning("请填写订阅地址");
-      return;
+      return false;
     }
     state.creatingSubscription.value = true;
     try {
@@ -268,11 +271,13 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
       state.subscriptionForm.url = "";
       state.selectedSubscriptionId.value = payload.subscription.id;
       state.systemProxySubscriptionId.value = payload.subscription.id;
-      state.activeView.value = "ports";
+      state.activeView.value = "nodes";
       ElMessage.success("订阅已导入");
       await loadState();
+      return true;
     } catch (error) {
       ElMessage.error(error instanceof Error ? error.message : "订阅导入失败");
+      return false;
     } finally {
       state.creatingSubscription.value = false;
     }
@@ -311,7 +316,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
   async function handleSaveBinding() {
     if (state.bindingMode.value === "node" && !state.selectedNode.value) {
       ElMessage.warning("请先选择节点");
-      return;
+      return false;
     }
     state.savingBinding.value = true;
     try {
@@ -326,8 +331,10 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
       );
       ElMessage.success("端口已保存");
       await loadState();
+      return true;
     } catch (error) {
       ElMessage.error(error instanceof Error ? error.message : "端口保存失败");
+      return false;
     } finally {
       state.savingBinding.value = false;
     }

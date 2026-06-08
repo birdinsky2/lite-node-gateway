@@ -1,5 +1,12 @@
 <template>
-  <section class="content-page settings-page">
+  <section class="prototype-page settings-page">
+    <header class="prototype-page-header">
+      <div>
+        <h1>设置</h1>
+        <p>配置核心与应用程序首选项（修改后自动保存）</p>
+      </div>
+    </header>
+
     <section class="settings-workspace">
       <article class="settings-panel settings-proxy-card">
         <SectionHeading

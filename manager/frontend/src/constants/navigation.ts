@@ -1,8 +1,15 @@
-import { Management, Monitor, Setting, SwitchButton } from "@element-plus/icons-vue";
+import { DataBoard, Link, Management, Monitor, Setting } from "@element-plus/icons-vue";
 
 import type { NavItem } from "@/types/ui";
 
 export const navItems: NavItem[] = [
+  {
+    key: "dashboard",
+    label: "系统概览",
+    desc: "实时状态",
+    longDesc: "Lite Node Gateway 的实时状态、核心连接和端口池使用情况。",
+    icon: DataBoard,
+  },
   {
     key: "subscriptions",
     label: "订阅管理",
@@ -11,18 +18,18 @@ export const navItems: NavItem[] = [
     icon: Management,
   },
   {
-    key: "ports",
-    label: "代理端口",
-    desc: "节点与端口",
-    longDesc: "选择订阅中的节点，将不同节点开放到不同本地端口，并查看端口映射状态。",
+    key: "nodes",
+    label: "节点浏览",
+    desc: "搜索与选择",
+    longDesc: "浏览订阅中的代理节点，筛选协议、测速，并选择节点用于端口绑定或系统代理。",
     icon: Monitor,
   },
   {
-    key: "system-proxy",
-    label: "系统代理",
-    desc: "本机上网开关",
-    longDesc: "选择订阅节点并控制宿主机系统代理，让本机流量通过当前节点出口。",
-    icon: SwitchButton,
+    key: "ports",
+    label: "端口绑定",
+    desc: "本地映射",
+    longDesc: "将节点或内置目标暴露到本地固定端口，并查看每个代理地址的可用状态。",
+    icon: Link,
   },
   {
     key: "settings",

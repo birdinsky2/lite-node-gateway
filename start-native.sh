@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_FRONTEND=0
+SKIP_FRONTEND_BUILD=0
+SKIP_HELPER=0
+NO_BROWSER=0
+SKIP_MIHOMO_DOWNLOAD=0
+RUN_SECONDS=0
+MANAGER_PORT=8089
+PROXY_PORT=7896
+CONTROLLER_PORT=9090
+HELPER_PORT="${SYSTEM_PROXY_HELPER_PORT:-18089}"
+WAIT_SECONDS=35
+DATA_DIR=""
+MIHOMO_VERSION="v1.19.26"
+
+usage() {
+  cat <<'EOF'
+Usage: ./start-native.sh [options]
+
+Starts Lite Node Gateway directly on the host without Docker.
+
+Options:
+  --build-frontend          Force npm frontend build before starting.
+  --skip-frontend-build     Do not build frontend; require manager/static to exist.
+  --skip-helper             Do not start the host system-proxy helper.
+  --no-browser              Do not open the Manager page automatically.
+  --skip-mihomo-download    Require vendor/mihomo/linux-amd64/mihomo to exist.
+  --run-seconds N           Stop automatically after N seconds, for smoke tests.
+  --manager-port N          Manager port. Default: 8089.
+  --proxy-port N            Main proxy port. Default: 7896.
+  --controller-port N       Mihomo control API port. Default: 9090.
+  --helper-port N           System proxy helper port. Default: 18089.
+  --data-dir PATH           Runtime data directory. Default: ./data.
+  --mihomo-version VERSION  Mihomo release version. Default: v1.19.26.
+  -h, --help                Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --build-frontend) BUILD_FRONTEND=1 ;;
+    --skip-frontend-build) SKIP_FRONTEND_BUILD=1 ;;
+    --skip-helper) SKIP_HELPER=1 ;;
+    --no-browser) NO_BROWSER=1 ;;
+    --skip-mihomo-download) SKIP_MIHOMO_DOWNLOAD=1 ;;
+    --run-seconds) shift; RUN_SECONDS="${1:?--run-seconds requires a value}" ;;
+    --manager-port) shift; MANAGER_PORT="${1:?--manager-port requires a value}" ;;
+    --proxy-port) shift; PROXY_PORT="${1:?--proxy-port requires a value}" ;;
+    --controller-port) shift; CONTROLLER_PORT="${1:?--controller-port requires a value}" ;;
+    --helper-port) shift; HELPER_PORT="${1:?--helper-port requires a value}" ;;
+    --data-dir) shift; DATA_DIR="${1:?--data-dir requires a value}" ;;
+    --mihomo-version) shift; MIHOMO_VERSION="${1:?--mihomo-version requires a value}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANAGER_DIR="$ROOT/manager"
+FRONTEND_DIR="$MANAGER_DIR/frontend"
+STATIC_DIR="$MANAGER_DIR/static"
+REQUIREMENTS_FILE="$MANAGER_DIR/requirements.txt"
+HELPER_SCRIPT="$ROOT/scripts/system_proxy_helper.py"
+VENV_DIR="$ROOT/.venv-linux"
+VENV_PYTHON="$VENV_DIR/bin/python"
+VENDOR_MIHOMO_DIR="$ROOT/vendor/mihomo/linux-amd64"
+MIHOMO_BIN="$VENDOR_MIHOMO_DIR/mihomo"
+BUILD_DIR="$ROOT/build/native"
+
+if [[ -z "$DATA_DIR" ]]; then
+  DATA_DIR="$ROOT/data"
+fi
+mkdir -p "$DATA_DIR"
+DATA_DIR="$(cd "$DATA_DIR" && pwd)"
+LOG_DIR="$DATA_DIR/logs"
+CONFIG_FILE="$DATA_DIR/config.yaml"
+MANAGER_URL="http://127.0.0.1:$MANAGER_PORT"
+CONTROLLER_URL="http://127.0.0.1:$CONTROLLER_PORT"
+HELPER_URL="http://127.0.0.1:$HELPER_PORT/api/system-proxy"
+PIDS=()
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 was not found in PATH." >&2
+    return 1
+  fi
+}
+
+frontend_static_exists() {
+  [[ -f "$STATIC_DIR/index.html" ]] && find "$STATIC_DIR/assets" -maxdepth 1 -type f \( -name '*.js' -o -name '*.css' \) 2>/dev/null | grep -q .
+}
+
+build_frontend_if_needed() {
+  if [[ "$SKIP_FRONTEND_BUILD" -eq 1 ]] && ! frontend_static_exists; then
+    echo "manager/static is missing. Rerun without --skip-frontend-build or build the frontend first." >&2
+    exit 1
+  fi
+  if [[ "$BUILD_FRONTEND" -eq 0 ]] && frontend_static_exists; then
+    echo "Using existing frontend build: $STATIC_DIR"
+    return
+  fi
+
+  need_cmd npm || {
+    echo "Install Node.js/npm, then rerun this script. Debian/Ubuntu: sudo apt install nodejs npm" >&2
+    exit 1
+  }
+  echo "Building frontend ..."
+  (
+    cd "$FRONTEND_DIR"
+    if [[ ! -d node_modules ]]; then
+      npm ci
+    fi
+    npm run build
+  )
+}
+
+ensure_python_env() {
+  need_cmd python3 || {
+    echo "Install Python 3.11+ and rerun this script. Debian/Ubuntu: sudo apt install python3 python3-venv python3-pip" >&2
+    exit 1
+  }
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    echo "Creating Python virtual environment ..."
+    if ! python3 -m venv "$VENV_DIR"; then
+      echo "Could not create a virtual environment. Debian/Ubuntu: sudo apt install python3-venv" >&2
+      exit 1
+    fi
+  fi
+
+  if "$VENV_PYTHON" -c "import yaml, requests" >/dev/null 2>&1; then
+    echo "Using existing Python dependencies: $VENV_DIR"
+    return
+  fi
+
+  echo "Installing Python dependencies ..."
+  "$VENV_PYTHON" -m pip install --upgrade pip
+  "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS_FILE"
+}
+
+download_file() {
+  local out_file="$1"
+  shift
+  mkdir -p "$(dirname "$out_file")"
+  for url in "$@"; do
+    echo "Downloading $url"
+    if command -v curl >/dev/null 2>&1; then
+      curl -L --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 240 -o "$out_file" "$url" || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$out_file" "$url" || true
+    else
+      echo "curl or wget is required to download mihomo." >&2
+      exit 1
+    fi
+    if [[ -s "$out_file" ]] && [[ "$(wc -c <"$out_file")" -gt 1000000 ]]; then
+      return
+    fi
+    rm -f "$out_file"
+  done
+  echo "Could not download mihomo $MIHOMO_VERSION." >&2
+  exit 1
+}
+
+ensure_mihomo() {
+  if [[ -x "$MIHOMO_BIN" ]]; then
+    echo "Using existing mihomo: $MIHOMO_BIN"
+    return
+  fi
+  if [[ "$SKIP_MIHOMO_DOWNLOAD" -eq 1 ]]; then
+    echo "mihomo was not found. Place it at $MIHOMO_BIN or rerun without --skip-mihomo-download." >&2
+    exit 1
+  fi
+
+  local gz_path="$BUILD_DIR/mihomo-linux.gz"
+  download_file "$gz_path" \
+    "https://downloads.sourceforge.net/project/mihomo.mirror/$MIHOMO_VERSION/mihomo-linux-amd64-v1-$MIHOMO_VERSION.gz" \
+    "https://downloads.sourceforge.net/project/mihomo.mirror/$MIHOMO_VERSION/mihomo-linux-amd64-compatible-$MIHOMO_VERSION.gz" \
+    "https://downloads.sourceforge.net/project/mihomo.mirror/$MIHOMO_VERSION/mihomo-linux-amd64-$MIHOMO_VERSION.gz" \
+    "https://github.com/MetaCubeX/mihomo/releases/download/$MIHOMO_VERSION/mihomo-linux-amd64-v1-$MIHOMO_VERSION.gz" \
+    "https://github.com/MetaCubeX/mihomo/releases/download/$MIHOMO_VERSION/mihomo-linux-amd64-compatible-$MIHOMO_VERSION.gz" \
+    "https://github.com/MetaCubeX/mihomo/releases/download/$MIHOMO_VERSION/mihomo-linux-amd64-$MIHOMO_VERSION.gz"
+  mkdir -p "$VENDOR_MIHOMO_DIR"
+  gzip -dc "$gz_path" >"$MIHOMO_BIN"
+  chmod +x "$MIHOMO_BIN"
+}
+
+ensure_initial_config() {
+  mkdir -p "$DATA_DIR/subscriptions" "$LOG_DIR"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    return
+  fi
+
+  cat >"$CONFIG_FILE" <<EOF
+mixed-port: $PROXY_PORT
+allow-lan: true
+bind-address: "*"
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:$CONTROLLER_PORT
+secret: ""
+unified-delay: true
+tcp-concurrent: true
+profile:
+  store-selected: true
+  store-fake-ip: true
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+proxies: []
+proxy-groups:
+  - name: AUTO
+    type: select
+    proxies:
+      - DIRECT
+  - name: NODE
+    type: select
+    proxies:
+      - DIRECT
+listeners: []
+rules:
+  - MATCH,NODE
+EOF
+}
+
+http_ready() {
+  "$VENV_PYTHON" - "$1" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen(sys.argv[1], timeout=2) as response:
+        raise SystemExit(0 if response.status < 500 else 1)
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
+wait_http() {
+  local name="$1"
+  local url="$2"
+  local deadline=$((SECONDS + WAIT_SECONDS))
+  while (( SECONDS < deadline )); do
+    if http_ready "$url"; then
+      return
+    fi
+    sleep 0.35
+  done
+  echo "$name did not become ready at $url." >&2
+  exit 1
+}
+
+is_http_ready() {
+  http_ready "$1"
+}
+
+start_logged_process() {
+  local name="$1"
+  shift
+  echo "Starting $name ..."
+  "$@" >"$LOG_DIR/$name.out.log" 2>"$LOG_DIR/$name.err.log" &
+  PIDS+=("$!")
+}
+
+cleanup() {
+  local pid
+  for (( idx=${#PIDS[@]}-1; idx>=0; idx-- )); do
+    pid="${PIDS[$idx]}"
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+trap cleanup EXIT INT TERM
+
+build_frontend_if_needed
+ensure_python_env
+ensure_mihomo
+ensure_initial_config
+
+export GATEWAY_DATA_DIR="$DATA_DIR"
+export MIHOMO_API_URL="$CONTROLLER_URL"
+export MIHOMO_CONFIG_IN_CORE="$CONFIG_FILE"
+export MIHOMO_MIXED_PORT="$PROXY_PORT"
+export MIHOMO_EXTERNAL_CONTROLLER="127.0.0.1:$CONTROLLER_PORT"
+export SYSTEM_PROXY_HELPER_URL="http://127.0.0.1:$HELPER_PORT"
+export SYSTEM_PROXY_SERVER="127.0.0.1:$PROXY_PORT"
+export SYSTEM_PROXY_TEST_PROXY="http://127.0.0.1:$PROXY_PORT"
+export PORT_PROBE_PROXY_HOST="127.0.0.1"
+export MANAGER_HOST="127.0.0.1"
+export MANAGER_PORT="$MANAGER_PORT"
+export SYSTEM_PROXY_HELPER_HOST="127.0.0.1"
+export SYSTEM_PROXY_HELPER_PORT="$HELPER_PORT"
+
+start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
+wait_http mihomo "$CONTROLLER_URL/version"
+
+if [[ "$SKIP_HELPER" -eq 0 ]]; then
+  if is_http_ready "$HELPER_URL"; then
+    echo "System proxy helper is already running: $HELPER_URL"
+  else
+    start_logged_process system-proxy-helper "$VENV_PYTHON" "$HELPER_SCRIPT"
+    wait_http system-proxy-helper "$HELPER_URL"
+  fi
+fi
+
+start_logged_process manager "$VENV_PYTHON" "$MANAGER_DIR/app.py"
+wait_http manager "$MANAGER_URL/api/health"
+
+cat <<EOF
+
+Ready.
+Manager:      $MANAGER_URL
+Main proxy:   http://127.0.0.1:$PROXY_PORT
+Core API:     $CONTROLLER_URL
+EOF
+if [[ "$SKIP_HELPER" -eq 0 ]]; then
+  echo "Helper:       $HELPER_URL"
+fi
+cat <<'EOF'
+
+Keep this terminal open while using the gateway. Press Ctrl+C to stop.
+EOF
+
+if [[ "$NO_BROWSER" -eq 0 ]] && command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$MANAGER_URL" >/dev/null 2>&1 || true
+fi
+
+if [[ "$RUN_SECONDS" -gt 0 ]]; then
+  sleep "$RUN_SECONDS"
+  echo "Timed run finished."
+else
+  while true; do
+    for pid in "${PIDS[@]}"; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        echo "A child process exited unexpectedly. PID: $pid" >&2
+        exit 1
+      fi
+    done
+    sleep 1
+  done
+fi

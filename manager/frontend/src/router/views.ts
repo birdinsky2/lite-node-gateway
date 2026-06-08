@@ -1,1 +1,1 @@
-export type ViewKey = "subscriptions" | "ports" | "system-proxy" | "settings";
+export type ViewKey = "dashboard" | "subscriptions" | "nodes" | "ports" | "settings";

@@ -13,15 +13,6 @@ services:
     environment:
       TZ: Asia/Shanghai
 
-  dashboard:
-    image: ghcr.io/metacubex/metacubexd:latest
-    container_name: lite-node-gateway-dashboard
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8088:80/tcp"
-    depends_on:
-      - mihomo
-
   manager:
     build:
       context: ./manager

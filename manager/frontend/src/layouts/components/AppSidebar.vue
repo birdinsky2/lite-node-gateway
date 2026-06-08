@@ -21,19 +21,15 @@
         <el-icon><component :is="item.icon" /></el-icon>
         <span class="nav-copy">
           <strong>{{ item.label }}</strong>
-          <small>{{ item.desc }}</small>
-        </span>
-        <span class="nav-count">
-          {{ navBadge(item.key) }}
         </span>
       </button>
     </nav>
 
-    <section class="sidebar-status">
+    <section class="sidebar-status" aria-label="版本与运行状态">
       <div :class="['status-orb', coreOnline ? 'online' : 'offline']" aria-hidden="true"></div>
       <div>
         <strong>{{ coreOnline ? "Mihomo 在线" : "Mihomo 离线" }}</strong>
-        <span>端口池 {{ portRange }}</span>
+        <span>v1.0.0-beta · {{ portRange }}</span>
       </div>
     </section>
   </aside>
@@ -45,7 +41,7 @@ import { Connection } from "@element-plus/icons-vue";
 import { navItems } from "@/constants/navigation";
 import type { ViewKey } from "@/router/views";
 
-const props = defineProps<{
+defineProps<{
   activeView: ViewKey;
   bindingCount: number;
   coreOnline: boolean;
@@ -59,14 +55,4 @@ const props = defineProps<{
 defineEmits<{
   "update:activeView": [value: ViewKey];
 }>();
-
-function navBadge(key: ViewKey) {
-  if (key === "subscriptions") return props.subscriptionCount;
-  if (key === "system-proxy") {
-    if (!props.systemProxyReady) return "ERR";
-    return props.systemProxyEnabled ? "ON" : "OFF";
-  }
-  if (key === "settings") return props.systemProxyPort || "-";
-  return props.bindingCount;
-}
 </script>

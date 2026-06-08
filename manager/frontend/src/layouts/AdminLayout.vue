@@ -12,20 +12,9 @@
     />
 
     <section class="admin-main">
-      <AppHeader
-        :active-meta="manager.activeMeta.value"
-        :binding-count="manager.bindings.value.length"
-        :core-version="manager.coreVersion.value"
-        :free-port-count="manager.freePortCount.value"
-        :loading-state="manager.loadingState.value"
-        :rebuilding="manager.rebuilding.value"
-        :subscription-count="manager.subscriptions.value.length"
-        @refresh="manager.loadState(true)"
-        @rebuild="manager.handleRebuild"
-      />
-
-      <SubscriptionsView v-if="manager.activeView.value === 'subscriptions'" />
-      <SystemProxyView v-else-if="manager.activeView.value === 'system-proxy'" />
+      <DashboardView v-if="manager.activeView.value === 'dashboard'" />
+      <SubscriptionsView v-else-if="manager.activeView.value === 'subscriptions'" />
+      <NodesView v-else-if="manager.activeView.value === 'nodes'" />
       <SettingsView v-else-if="manager.activeView.value === 'settings'" />
       <PortsView v-else />
     </section>
@@ -34,12 +23,12 @@
 
 <script setup lang="ts">
 import { useGatewayContext } from "@/composables/useGatewayContext";
-import AppHeader from "@/layouts/components/AppHeader.vue";
 import AppSidebar from "@/layouts/components/AppSidebar.vue";
+import DashboardView from "@/views/dashboard/DashboardView.vue";
+import NodesView from "@/views/nodes/NodesView.vue";
 import PortsView from "@/views/ports/PortsView.vue";
 import SettingsView from "@/views/settings/SettingsView.vue";
 import SubscriptionsView from "@/views/subscriptions/SubscriptionsView.vue";
-import SystemProxyView from "@/views/system-proxy/SystemProxyView.vue";
 
 const manager = useGatewayContext();
 </script>

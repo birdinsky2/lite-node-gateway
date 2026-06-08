@@ -191,6 +191,7 @@ def main() -> int:
             "SYSTEM_PROXY_HELPER_URL": f"http://127.0.0.1:{args.helper_port}",
             "SYSTEM_PROXY_SERVER": f"127.0.0.1:{args.proxy_port}",
             "SYSTEM_PROXY_TEST_PROXY": f"http://127.0.0.1:{args.proxy_port}",
+            "PORT_PROBE_PROXY_HOST": "127.0.0.1",
             "MANAGER_HOST": "127.0.0.1",
             "MANAGER_PORT": str(args.manager_port),
             "SYSTEM_PROXY_HELPER_HOST": "127.0.0.1",

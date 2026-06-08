@@ -69,6 +69,7 @@ SYSTEM_PROXY_HELPER_URL = os.environ.get("SYSTEM_PROXY_HELPER_URL", "http://host
 SYSTEM_PROXY_SERVER = os.environ.get("SYSTEM_PROXY_SERVER", "127.0.0.1:7896")
 SYSTEM_PROXY_TEST_URL = os.environ.get("SYSTEM_PROXY_TEST_URL", "https://ipinfo.io/json")
 SYSTEM_PROXY_TEST_PROXY = os.environ.get("SYSTEM_PROXY_TEST_PROXY", "http://mihomo:7897")
+PORT_PROBE_PROXY_HOST = os.environ.get("PORT_PROBE_PROXY_HOST", "mihomo")
 
 PORT_MIN = int(os.environ.get("PORT_MIN", "7900"))
 PORT_MAX = int(os.environ.get("PORT_MAX", "7999"))
@@ -1344,7 +1345,7 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         if not (PORT_MIN <= port <= PORT_MAX):
             raise ApiError(400, f"端口必须在 {PORT_MIN}-{PORT_MAX} 之间。")
         target_url = str(body.get("url") or "https://ipinfo.io/json").strip()
-        proxies = {"http": f"http://mihomo:{port}", "https": f"http://mihomo:{port}"}
+        proxies = {"http": f"http://{PORT_PROBE_PROXY_HOST}:{port}", "https": f"http://{PORT_PROBE_PROXY_HOST}:{port}"}
         started = dt.datetime.now()
         try:
             response = requests.get(target_url, proxies=proxies, timeout=25)

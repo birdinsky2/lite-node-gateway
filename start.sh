@@ -133,7 +133,7 @@ if [[ "$SKIP_DOCKER" -eq 0 ]]; then
   fi
 
   echo "Starting Docker services ..."
-  compose_args=(compose -f "$COMPOSE_FILE" up -d)
+  compose_args=(compose -f "$COMPOSE_FILE" up -d --remove-orphans)
   if [[ "$BUILD" -eq 1 ]]; then
     compose_args+=(--build)
   fi
@@ -144,7 +144,6 @@ cat <<EOF
 
 Ready.
 Manager:      http://127.0.0.1:8089
-Dashboard:    http://127.0.0.1:8088
 Main proxy:   http://127.0.0.1:7896
 Helper:       $HELPER_URL
 EOF

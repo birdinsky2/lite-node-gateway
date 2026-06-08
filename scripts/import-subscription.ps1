@@ -34,7 +34,7 @@ if (-not [string]::IsNullOrWhiteSpace($Secret)) {
 python @normalizeArgs
 
 if (-not $NoStart) {
-  docker compose -f (Join-Path $Root "docker-compose.yml") up -d
+  docker compose -f (Join-Path $Root "docker-compose.yml") up -d --remove-orphans
 }
 
 Write-Host ""
@@ -44,4 +44,3 @@ if ([string]::IsNullOrWhiteSpace($Secret)) {
 } else {
   Write-Host "Controller: http://127.0.0.1:9090  Secret: $Secret"
 }
-Write-Host "Dashboard:  http://127.0.0.1:8088"

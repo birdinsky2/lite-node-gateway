@@ -1,110 +1,69 @@
 # Lite Node Gateway
 
-Lite Node Gateway 是一个轻量级本地节点网关，用 `mihomo` 作为代理核心，提供一个 Manager Web 面板来管理订阅、节点和固定代理端口。
+Lite Node Gateway 是一个本地节点网关管理器。它用 `mihomo` 作为代理核心，提供一个 Manager Web 面板，用来导入订阅、浏览节点、测试延迟，并把指定节点固定暴露到本机端口。
 
-你可以把它理解成一个“本地代理端口分配器”：导入订阅后，选择某个节点，把它固定开放到 `7900-7999` 里的一个端口。之后其他程序、脚本或 Docker 容器就可以稳定使用这个端口，不用关心当前选中的是哪个节点。
+你可以把它理解成一个“本地代理端口分配器”：导入订阅后，把某个节点绑定到 `7900-7999` 中的一个端口。之后脚本、浏览器、Docker 容器或其他程序只需要访问这个固定端口，不用关心当前订阅里节点名称怎么变、节点列表怎么刷新。
 
 ## 功能
 
-- 导入多个订阅地址
-- 查看订阅节点并按端口固定暴露
-- 支持内置目标 `AUTO`、`DIRECT`
+- 导入和刷新多个订阅地址
+- 浏览订阅节点，按名称、类型、地区、延迟筛选
+- 一键测试节点延迟
+- 把节点、`AUTO` 或 `DIRECT` 固定绑定到本地端口
 - 自动生成并热重载 `mihomo` 配置
-- 支持宿主机系统代理开关
-- 支持 Docker 运行、Windows 便携包运行、Debian/Ubuntu `.deb` 安装
+- 在 Windows 和支持 `gsettings` 的 Linux 桌面环境中切换系统代理
+- 支持三种运行方式：安装包、非 Docker 一键脚本、Docker Compose
 
-## 界面示例
-
-下面截图使用的是虚构演示订阅和节点，只用于展示界面效果。
+## 界面预览
 
 ![Manager 端口映射示例](docs/images/manager-ports.png)
 
-## 默认地址
+## 快速选择
+
+| 场景 | 推荐方式 | 适合谁 |
+| --- | --- | --- |
+| 普通用户安装后长期使用 | 安装包 | Windows 用 exe，Debian/Ubuntu 用 deb |
+| 源码运行，不想用 Docker | 非 Docker 一键脚本 | 开发、调试、临时部署 |
+| 已经有容器环境 | Docker Compose | 服务器、NAS、容器化工作流 |
+
+默认访问地址：
 
 | 服务 | 地址 |
 | --- | --- |
 | Manager 管理面板 | `http://127.0.0.1:8089` |
-| MetaCubeXD 面板 | `http://127.0.0.1:8088` |
-| Mihomo 控制接口 | `http://127.0.0.1:9090` |
 | 主代理端口 | `http://127.0.0.1:7896` |
 | 固定端口池 | `http://127.0.0.1:7900-7999` |
+| Mihomo 控制接口 | `http://127.0.0.1:9090` |
 | System proxy helper | `http://127.0.0.1:18089/api/system-proxy` |
 
-默认只绑定到 `127.0.0.1`，适合本机和 Docker Desktop 内的本地容器使用。如果部署到服务器并希望外部机器访问，需要修改端口绑定、防火墙和访问控制。
+默认只监听 `127.0.0.1`。如果要开放到局域网或公网，请先处理鉴权、防火墙和控制接口暴露风险。
 
-## 使用方式一：Docker
+## 方式一：安装包
 
-适合源码运行、开发调试，或者已经安装 Docker Desktop 的机器。
+这是面向普通用户的推荐方式，不需要 Docker。
 
-Windows：
+### Windows exe
 
-```powershell
-cd C:\project\lite-node-gateway
-.\start.ps1 -Build
-```
-
-Linux：
-
-```bash
-cd /path/to/lite-node-gateway
-bash ./start.sh --build
-```
-
-查看状态：
-
-```powershell
-docker compose ps
-```
-
-停止：
-
-```powershell
-docker compose down
-```
-
-`start.ps1` / `start.sh` 会先启动宿主机 system proxy helper，再启动 Docker 服务。直接运行 `docker compose up -d` 也能启动网关核心服务，但系统代理页会因为 helper 没有启动而不可用。
-
-Docker 模式会启动三个服务：
-
-- `mihomo`：代理核心
-- `dashboard`：MetaCubeXD 面板
-- `manager`：本项目的管理面板
-
-## 使用方式二：Windows 便携包
-
-适合不想安装 Docker 的 Windows 用户。便携包不需要 Python、Node 或 Docker。
-
-先构建：
+构建便携包：
 
 ```powershell
 .\packaging\windows\build-windows.ps1
 ```
 
-构建完成后运行：
+运行：
 
 ```powershell
 .\dist\lite-node-gateway-windows\lite-node-gateway.exe
 ```
 
-也可以把整个目录复制到其他 Windows x64 电脑上运行：
+便携包目录需要整体复制，不要只复制单个 exe：
 
 ```text
 dist\lite-node-gateway-windows\
-```
-
-注意要复制整个目录，不要只复制 `lite-node-gateway.exe`。目录里需要包含：
-
-```text
-lite-node-gateway.exe
-manager.exe
-system-proxy-helper.exe
-bin\mihomo.exe
-```
-
-便携包默认数据目录：
-
-```text
-dist\lite-node-gateway-windows\data
+  lite-node-gateway.exe
+  manager.exe
+  system-proxy-helper.exe
+  bin\mihomo.exe
 ```
 
 冒烟测试：
@@ -113,23 +72,9 @@ dist\lite-node-gateway-windows\data
 .\dist\lite-node-gateway-windows\lite-node-gateway.exe --no-browser --run-seconds 5
 ```
 
-如果默认端口被占用，可以临时指定端口：
+### Debian/Ubuntu deb
 
-```powershell
-.\dist\lite-node-gateway-windows\lite-node-gateway.exe `
-  --manager-port 8091 `
-  --proxy-port 7898 `
-  --controller-port 9191 `
-  --helper-port 18091
-```
-
-Windows 便携包当前包含 Manager 和 `mihomo` 核心，不包含 MetaCubeXD 独立面板。日常管理订阅和端口直接使用 Manager 即可。
-
-## 使用方式三：Debian/Ubuntu deb 包
-
-适合 Linux 服务器或桌面环境，不需要 Docker。
-
-构建：
+构建 deb 包：
 
 ```powershell
 .\packaging\deb\build-deb.ps1
@@ -141,54 +86,120 @@ Windows 便携包当前包含 Manager 和 `mihomo` 核心，不包含 MetaCubeXD
 dist\lite-node-gateway_0.1.0_amd64.deb
 ```
 
-在 Debian/Ubuntu 安装：
+安装：
 
 ```bash
 sudo apt install ./lite-node-gateway_0.1.0_amd64.deb
 ```
 
-安装后服务会注册到 systemd：
+查看服务：
 
 ```bash
 sudo systemctl status lite-node-gateway-mihomo
 sudo systemctl status lite-node-gateway-manager
 ```
 
-常用操作：
+重启服务：
 
 ```bash
 sudo systemctl restart lite-node-gateway-mihomo lite-node-gateway-manager
-sudo systemctl stop lite-node-gateway-manager
 ```
 
-默认 Linux 数据目录：
+deb 包会安装 `mihomo` 和 Manager systemd 服务。服务器或 headless 环境通常不能修改桌面系统代理，但订阅管理、节点绑定和代理端口功能不受影响。
 
-```text
-/var/lib/lite-node-gateway
-```
+## 方式二：非 Docker 一键脚本
 
-`.deb` 包内置 Linux 版 `mihomo`，但依赖系统提供：
+源码目录里可以直接运行，不需要 Docker。脚本会准备 Python 虚拟环境、下载或复用 `mihomo`、创建初始配置、启动核心进程，并等待健康检查通过。
 
-```text
-python3
-python3-requests
-python3-yaml
-systemd
-```
-
-用 `apt install ./xxx.deb` 安装时，缺失依赖会自动处理。
-
-## 使用方式四：旧脚本
-
-旧脚本仍可用，但建议优先使用 Manager 面板。
+Windows：
 
 ```powershell
-.\scripts\list-nodes.ps1
-.\scripts\bind-port.ps1 -Port 7901 -Node AUTO
-.\scripts\list-port-bindings.ps1
+cd C:\project\lite-node-gateway
+powershell -ExecutionPolicy Bypass -File .\start-native.ps1
 ```
 
-## Web 管理流程
+Linux：
+
+```bash
+cd /path/to/lite-node-gateway
+bash ./start-native.sh
+```
+
+脚本默认会保持终端窗口不退出。用完按 `Ctrl+C` 停止。
+
+常用参数：
+
+```powershell
+.\start-native.ps1 -NoBrowser
+.\start-native.ps1 -SkipHelper
+.\start-native.ps1 -BuildFrontend
+.\start-native.ps1 -ManagerPort 8091 -ProxyPort 7898 -ControllerPort 9191 -HelperPort 18091
+```
+
+```bash
+bash ./start-native.sh --no-browser
+bash ./start-native.sh --skip-helper
+bash ./start-native.sh --build-frontend
+bash ./start-native.sh --manager-port 8091 --proxy-port 7898 --controller-port 9191 --helper-port 18091
+```
+
+需要的环境：
+
+| 系统 | 必需 | 仅在需要重建前端时需要 |
+| --- | --- | --- |
+| Windows | PowerShell、Python 3.11+、curl.exe | Node.js、npm |
+| Linux | bash、python3、python3-venv、python3-pip、curl 或 wget、gzip | Node.js、npm |
+
+脚本会把本地运行状态放在这些目录：
+
+```text
+.venv-windows\ 或 .venv-linux\
+vendor\mihomo\
+data\
+```
+
+## 方式三：Docker Compose
+
+适合已经使用 Docker Desktop、服务器容器环境或 NAS 的用户。
+
+纯 Compose：
+
+```bash
+docker compose up -d --build --remove-orphans
+```
+
+Windows 一键启动 Docker 版：
+
+```powershell
+.\start.ps1 -Build
+```
+
+Linux 一键启动 Docker 版：
+
+```bash
+bash ./start.sh --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+```
+
+停止：
+
+```bash
+docker compose down
+```
+
+Compose 只启动两个容器：
+
+- `mihomo`：代理核心
+- `manager`：本项目的管理后台
+
+纯 Docker Compose 不能可靠修改宿主机系统代理。`start.ps1` / `start.sh` 会先在宿主机启动 system proxy helper，再启动 Compose；如果直接执行 `docker compose up`，系统代理开关可能不可用，但订阅、节点、端口绑定仍可正常工作。
+
+## 日常使用
 
 打开 Manager：
 
@@ -196,34 +207,37 @@ systemd
 http://127.0.0.1:8089
 ```
 
-常用流程：
+基本流程：
 
-1. 进入订阅管理页
-2. 导入一个或多个订阅地址
-3. 切到代理端口页
-4. 选择订阅和节点
-5. 填写端口，例如 `7903`
-6. 点击保存端口
+1. 进入“订阅管理”，导入订阅地址。
+2. 进入“节点浏览”，查看节点并测试延迟。
+3. 进入“端口绑定”，选择订阅、节点和端口。
+4. 保存后，Manager 会生成 `mihomo` 配置并热重载。
+5. 其他程序通过固定端口使用代理。
 
-保存后会自动生成 `mihomo` 配置并热重载，不需要手动重启容器或进程。
-
-应用里使用固定端口：
+例如把某个节点绑定到 `7903` 后，本机程序使用：
 
 ```text
 http://127.0.0.1:7903
 ```
 
-另一个 Docker 容器访问宿主机端口时，例如 `sub2api`：
+另一个 Docker 容器访问宿主机固定端口：
 
 ```text
-protocol: http
 host: host.docker.internal
 port: 7903
+protocol: http
 ```
 
-## 验证代理
+## 验证
 
-宿主机测试：
+检查 Manager：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8089/api/health
+```
+
+测试固定端口代理：
 
 ```powershell
 Invoke-WebRequest -UseBasicParsing `
@@ -232,74 +246,108 @@ Invoke-WebRequest -UseBasicParsing `
   -TimeoutSec 60
 ```
 
-从另一个 Docker 容器测试：
+从 Docker 容器测试：
 
-```powershell
+```bash
 docker exec sub2api sh -lc 'curl -sS --max-time 60 -x http://host.docker.internal:7903 https://ipinfo.io/json'
 ```
 
-检查 Manager 健康状态：
+## 数据目录
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8089/api/health
-```
+| 运行方式 | 默认数据目录 |
+| --- | --- |
+| Docker Compose | `data\` |
+| 非 Docker 脚本 | `data\` |
+| Windows exe | `dist\lite-node-gateway-windows\data\` |
+| Debian/Ubuntu deb | `/var/lib/lite-node-gateway` |
 
-## 数据文件
-
-Docker / 源码模式：
+主要文件：
 
 ```text
-data\manager-state.json
-data\subscriptions\*.yaml
-data\config.yaml
-data\config.yaml.before-manager
+manager-state.json
+subscriptions\*.yaml
+config.yaml
+config.yaml.before-manager
+logs\
+```
+
+订阅 URL 会保存在本地状态文件里，用于后续刷新。API 返回时会隐藏 `token`、`key`、`secret`、`password` 等敏感查询参数。
+
+## 开发
+
+前端：
+
+```powershell
+cd manager\frontend
+npm ci
+npm run build
+```
+
+后端语法检查：
+
+```powershell
+python -m py_compile manager\app.py scripts\system_proxy_helper.py
+```
+
+Docker 构建检查：
+
+```powershell
+docker compose config --services
+docker compose up -d --build --remove-orphans
 ```
 
 Windows 便携包：
-
-```text
-dist\lite-node-gateway-windows\data
-```
-
-Debian/Ubuntu：
-
-```text
-/var/lib/lite-node-gateway
-```
-
-订阅 URL 会保存在本地状态文件里，用于刷新订阅；Web API 返回时会自动隐藏 `token`、`key`、`secret`、`password` 等敏感查询参数。
-
-## 构建产物
-
-Windows：
 
 ```powershell
 .\packaging\windows\build-windows.ps1
 ```
 
-输出：
-
-```text
-dist\lite-node-gateway-windows\
-```
-
-Debian/Ubuntu：
+Debian/Ubuntu 包：
 
 ```powershell
 .\packaging\deb\build-deb.ps1
 ```
 
-输出：
+## 排障
 
-```text
-dist\lite-node-gateway_0.1.0_amd64.deb
+### 双击 ps1 打开了记事本
+
+不要双击 `.ps1` 文件。打开 PowerShell，进入项目目录后执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start-native.ps1
 ```
 
-构建输出、下载的二进制依赖和临时文件位于 `dist/`、`build/`、`vendor/`，这些目录默认不会提交到 Git。
+Docker 方式则执行：
 
-## 注意事项
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -Build
+```
 
-- Windows 首次运行未签名 exe 时，可能会出现 SmartScreen 或 Defender 提示。
-- 如果 `8089`、`7896`、`9090`、`7900-7999` 被占用，需要先停止冲突程序或改用自定义端口。
-- Linux 系统代理功能依赖桌面环境的 `gsettings` 后端；服务器或 headless 环境通常没有系统代理后端，但订阅、端口映射和代理核心仍可正常使用。
-- 如果要把服务开放给局域网或公网，请先设置访问控制，避免暴露 `mihomo` 控制接口和代理端口。
+### 端口被占用
+
+默认会使用 `8089`、`7896`、`9090`、`18089` 和 `7900-7999`。如果冲突，可以换端口：
+
+```powershell
+.\start-native.ps1 -ManagerPort 8091 -ProxyPort 7898 -ControllerPort 9191 -HelperPort 18091
+```
+
+### 系统代理开关不可用
+
+系统代理需要宿主机 helper：
+
+- Windows exe 和 `start-native.ps1` 默认会启动 helper。
+- Docker 纯 Compose 不会启动 helper；用 `start.ps1 -Build` 或 `start.sh --build`。
+- Linux 桌面环境需要可用的 `gsettings` 和桌面 DBus 会话；服务器环境通常不支持。
+
+### Docker 里不能访问 127.0.0.1:7903
+
+容器里的 `127.0.0.1` 是容器自身。访问宿主机端口请用：
+
+```text
+host.docker.internal:7903
+```
+
+## 许可证
+
+Apache-2.0。详见 [LICENSE](LICENSE)。

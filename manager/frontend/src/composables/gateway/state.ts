@@ -5,7 +5,7 @@ import type { BindingMode, GatewayState, NodeDelayResult, NodeItem, SystemProxyP
 import type { NodeSortMode } from "@/types/ui";
 
 export function createGatewayState() {
-  const activeView = ref<ViewKey>("ports");
+  const activeView = ref<ViewKey>("dashboard");
   const stateData = ref<GatewayState | null>(null);
   const selectedSubscriptionId = ref<string | null>(null);
   const nodes = ref<NodeItem[]>([]);
