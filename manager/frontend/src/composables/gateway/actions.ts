@@ -19,6 +19,7 @@ import {
 import type { GatewayDerived } from "@/composables/gateway/derived";
 import type { GatewayManagerState } from "@/composables/gateway/state";
 import type { NodeItem } from "@/types/gateway";
+import { nodeDelayResultKey, nodeKey } from "@/utils/gateway";
 
 export function useGatewayActions(state: GatewayManagerState, derived: GatewayDerived) {
   function syncSystemProxySettingsForm() {
@@ -384,7 +385,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
       const payload = await testNodeDelays(state.selectedSubscriptionId.value);
       state.nodeDelayResults.value = {
         ...state.nodeDelayResults.value,
-        ...Object.fromEntries(payload.results.map((item) => [item.node_id, item])),
+        ...Object.fromEntries(payload.results.map((item) => [nodeDelayResultKey(item), item])),
       };
       state.nodeSort.value = "delay-asc";
       ElMessage.success(`测速完成：${payload.ok_count}/${payload.count} 个节点可用`);
@@ -392,6 +393,30 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
       ElMessage.error(error instanceof Error ? error.message : "节点测速失败");
     } finally {
       state.testingDelays.value = false;
+    }
+  }
+
+  async function handleTestNodeDelay(node: NodeItem) {
+    const key = nodeKey(node);
+    state.testingNodeDelayKeys.value = new Set([...state.testingNodeDelayKeys.value, key]);
+    try {
+      const payload = await testNodeDelays(node.subscription_id, node.id);
+      state.nodeDelayResults.value = {
+        ...state.nodeDelayResults.value,
+        ...Object.fromEntries(payload.results.map((item) => [nodeDelayResultKey(item), item])),
+      };
+      const result = payload.results[0];
+      if (result?.ok) {
+        ElMessage.success(`${node.name} 测速完成：${result.delay_ms} ms`);
+      } else {
+        ElMessage.warning(`${node.name} 测速超时`);
+      }
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : "节点测速失败");
+    } finally {
+      const next = new Set(state.testingNodeDelayKeys.value);
+      next.delete(key);
+      state.testingNodeDelayKeys.value = next;
     }
   }
 
@@ -409,7 +434,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
       const payload = await testNodeDelays(state.systemProxySubscriptionId.value);
       state.nodeDelayResults.value = {
         ...state.nodeDelayResults.value,
-        ...Object.fromEntries(payload.results.map((item) => [item.node_id, item])),
+        ...Object.fromEntries(payload.results.map((item) => [nodeDelayResultKey(item), item])),
       };
       state.systemProxySort.value = "delay-asc";
       ElMessage.success(`测速完成：${payload.ok_count}/${payload.count} 个节点可用`);
@@ -475,6 +500,7 @@ export function useGatewayActions(state: GatewayManagerState, derived: GatewayDe
     handleDeleteBinding,
     handleRebuild,
     handleTestAllDelays,
+    handleTestNodeDelay,
     handleTestSystemProxyDelays,
     handleProbe,
     handleProbeSystemProxy,

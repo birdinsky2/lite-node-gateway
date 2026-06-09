@@ -89,6 +89,59 @@ need_cmd() {
   fi
 }
 
+python_venv_install_hint() {
+  local version
+  version="$(python3 - <<'PY' 2>/dev/null || true
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  if [[ -n "$version" ]]; then
+    echo "Debian/Ubuntu/Deepin: sudo apt install python${version}-venv python3-pip"
+  else
+    echo "Debian/Ubuntu/Deepin: sudo apt install python3-venv python3-pip"
+  fi
+}
+
+remove_venv_dir() {
+  if [[ -d "$VENV_DIR" && "$VENV_DIR" == "$ROOT/.venv-linux" ]]; then
+    rm -rf "$VENV_DIR"
+  fi
+}
+
+venv_has_pip() {
+  [[ -x "$VENV_PYTHON" ]] && "$VENV_PYTHON" -m pip --version >/dev/null 2>&1
+}
+
+create_python_venv() {
+  echo "Creating Python virtual environment ..."
+  if ! python3 -m venv "$VENV_DIR"; then
+    echo "Could not create a virtual environment." >&2
+    echo "$(python_venv_install_hint)" >&2
+    if [[ -d "$VENV_DIR" ]] && ! venv_has_pip; then
+      echo "Removing incomplete virtual environment: $VENV_DIR" >&2
+      remove_venv_dir
+    fi
+    exit 1
+  fi
+
+  if venv_has_pip; then
+    return
+  fi
+
+  echo "The virtual environment was created without pip. Trying ensurepip ..." >&2
+  if "$VENV_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 && venv_has_pip; then
+    echo "Bootstrapped pip in the virtual environment."
+    return
+  fi
+
+  echo "Could not bootstrap pip in the virtual environment." >&2
+  echo "$(python_venv_install_hint)" >&2
+  echo "Removing incomplete virtual environment: $VENV_DIR" >&2
+  remove_venv_dir
+  exit 1
+}
+
 frontend_static_exists() {
   [[ -f "$STATIC_DIR/index.html" ]] && find "$STATIC_DIR/assets" -maxdepth 1 -type f \( -name '*.js' -o -name '*.css' \) 2>/dev/null | grep -q .
 }
@@ -119,14 +172,25 @@ build_frontend_if_needed() {
 
 ensure_python_env() {
   need_cmd python3 || {
-    echo "Install Python 3.11+ and rerun this script. Debian/Ubuntu: sudo apt install python3 python3-venv python3-pip" >&2
+    echo "Install Python 3.11+ and rerun this script." >&2
+    echo "Debian/Ubuntu/Deepin: sudo apt install python3 python3-venv python3-pip" >&2
     exit 1
   }
+  if [[ -d "$VENV_DIR" && ! -x "$VENV_PYTHON" ]]; then
+    echo "Detected incomplete Python virtual environment: $VENV_DIR"
+    echo "Recreating Python virtual environment ..."
+    remove_venv_dir
+  fi
   if [[ ! -x "$VENV_PYTHON" ]]; then
-    echo "Creating Python virtual environment ..."
-    if ! python3 -m venv "$VENV_DIR"; then
-      echo "Could not create a virtual environment. Debian/Ubuntu: sudo apt install python3-venv" >&2
-      exit 1
+    create_python_venv
+  elif ! venv_has_pip; then
+    echo "Detected broken Python virtual environment: $VENV_DIR"
+    if "$VENV_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 && venv_has_pip; then
+      echo "Repaired pip in the existing Python virtual environment."
+    else
+      echo "Recreating Python virtual environment ..."
+      remove_venv_dir
+      create_python_venv
     fi
   fi
 
@@ -228,6 +292,16 @@ proxy-groups:
       - DIRECT
 listeners: []
 rules:
+  - DOMAIN,localhost,DIRECT
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR6,::1/128,DIRECT,no-resolve
+  - IP-CIDR6,fc00::/7,DIRECT,no-resolve
+  - IP-CIDR6,fe80::/10,DIRECT,no-resolve
   - MATCH,NODE
 EOF
 }
@@ -261,6 +335,69 @@ wait_http() {
 
 is_http_ready() {
   http_ready "$1"
+}
+
+wait_http_down() {
+  local name="$1"
+  local url="$2"
+  local deadline=$((SECONDS + 8))
+  while (( SECONDS < deadline )); do
+    if ! http_ready "$url"; then
+      return
+    fi
+    sleep 0.35
+  done
+  echo "$name is still responding at $url." >&2
+  exit 1
+}
+
+port_listener_pids() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true
+  elif command -v ss >/dev/null 2>&1; then
+    ss -ltnp "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u || true
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp "$port" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true
+  fi
+}
+
+stop_port_listeners() {
+  local name="$1"
+  local port="$2"
+  local pids=()
+  local pid
+  mapfile -t pids < <(port_listener_pids "$port")
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    echo "$name is responding, but no listener PID could be found for port $port." >&2
+    exit 1
+  fi
+
+  echo "Stopping existing $name on port $port ..."
+  for pid in "${pids[@]}"; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+
+  local deadline=$((SECONDS + 8))
+  while (( SECONDS < deadline )); do
+    local still_running=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        still_running=1
+      fi
+    done
+    if [[ "$still_running" -eq 0 ]]; then
+      return
+    fi
+    sleep 0.35
+  done
+
+  echo "Existing $name did not stop gracefully; forcing stop ..."
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 start_logged_process() {
@@ -301,8 +438,12 @@ export MANAGER_PORT="$MANAGER_PORT"
 export SYSTEM_PROXY_HELPER_HOST="127.0.0.1"
 export SYSTEM_PROXY_HELPER_PORT="$HELPER_PORT"
 
-start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
-wait_http mihomo "$CONTROLLER_URL/version"
+if is_http_ready "$CONTROLLER_URL/version"; then
+  echo "mihomo is already running: $CONTROLLER_URL"
+else
+  start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
+  wait_http mihomo "$CONTROLLER_URL/version"
+fi
 
 if [[ "$SKIP_HELPER" -eq 0 ]]; then
   if is_http_ready "$HELPER_URL"; then
@@ -313,8 +454,31 @@ if [[ "$SKIP_HELPER" -eq 0 ]]; then
   fi
 fi
 
-start_logged_process manager "$VENV_PYTHON" "$MANAGER_DIR/app.py"
-wait_http manager "$MANAGER_URL/api/health"
+if [[ "$BUILD_FRONTEND" -eq 1 ]] && is_http_ready "$MANAGER_URL/api/health"; then
+  echo "Frontend was rebuilt; restarting existing manager at $MANAGER_URL"
+  stop_port_listeners manager "$MANAGER_PORT"
+  wait_http_down manager "$MANAGER_URL/api/health"
+  MANAGER_RESTARTED=1
+fi
+
+if is_http_ready "$MANAGER_URL/api/health"; then
+  echo "manager is already running: $MANAGER_URL"
+else
+  start_logged_process manager "$VENV_PYTHON" "$MANAGER_DIR/app.py"
+  wait_http manager "$MANAGER_URL/api/health"
+fi
+
+if [[ "${MANAGER_RESTARTED:-0}" -eq 1 ]]; then
+  sleep 1.2
+  if ! is_http_ready "$CONTROLLER_URL/version"; then
+    start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
+    wait_http mihomo "$CONTROLLER_URL/version"
+  fi
+  if [[ "$SKIP_HELPER" -eq 0 ]] && ! is_http_ready "$HELPER_URL"; then
+    start_logged_process system-proxy-helper "$VENV_PYTHON" "$HELPER_SCRIPT"
+    wait_http system-proxy-helper "$HELPER_URL"
+  fi
+fi
 
 cat <<EOF
 

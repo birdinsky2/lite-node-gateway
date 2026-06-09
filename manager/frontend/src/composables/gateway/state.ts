@@ -34,6 +34,7 @@ export function createGatewayState() {
   const rebuilding = ref(false);
   const probingPort = ref<number | null>(null);
   const testingDelays = ref(false);
+  const testingNodeDelayKeys = ref<Set<string>>(new Set());
   const testingSystemProxyDelays = ref(false);
   const savingSystemProxy = ref(false);
   const savingSystemProxySettings = ref(false);
@@ -77,6 +78,7 @@ export function createGatewayState() {
     rebuilding,
     probingPort,
     testingDelays,
+    testingNodeDelayKeys,
     testingSystemProxyDelays,
     savingSystemProxy,
     savingSystemProxySettings,

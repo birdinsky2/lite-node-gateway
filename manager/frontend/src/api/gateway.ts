@@ -49,10 +49,10 @@ export function getNodes(subscriptionId: string) {
   return request<NodeListResponse>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/nodes`);
 }
 
-export function testNodeDelays(subscriptionId: string) {
+export function testNodeDelays(subscriptionId: string, nodeId?: string) {
   return request<NodeDelayResponse>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/nodes/delay`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(nodeId ? { node_id: nodeId } : {}),
   });
 }
 

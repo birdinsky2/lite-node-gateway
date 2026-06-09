@@ -65,10 +65,113 @@ function Invoke-Checked {
     [string[]]$Arguments,
     [string]$WorkingDirectory = $Root
   )
-  & $FilePath @Arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
+  Push-Location $WorkingDirectory
+  try {
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+      throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
+    }
+  } finally {
+    Pop-Location
   }
+}
+
+function Invoke-Quiet {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments,
+    [string]$WorkingDirectory = $Root
+  )
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    Push-Location $WorkingDirectory
+    try {
+      & $FilePath @Arguments *> $null
+      return ($LASTEXITCODE -eq 0)
+    } finally {
+      Pop-Location
+    }
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+function Get-PythonVenvInstallHint {
+  param([hashtable]$Launch)
+  $version = ""
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & $Launch.FilePath @($Launch.Args + @("-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")) 2>$null
+    if ($LASTEXITCODE -eq 0 -and $output) {
+      $version = ($output | Select-Object -First 1).ToString().Trim()
+    }
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ([string]::IsNullOrWhiteSpace($version)) {
+    return "Install or repair Python 3.11+ for Windows, and make sure pip is installed and Python is available in PATH."
+  }
+  return "Install or repair Python $version for Windows, and make sure pip is installed and Python is available in PATH."
+}
+
+function Remove-PythonVenv {
+  $expected = [System.IO.Path]::GetFullPath((Join-Path $Root ".venv-windows"))
+  $actual = [System.IO.Path]::GetFullPath($VenvDir)
+  if ($actual -ne $expected) {
+    throw "Refusing to remove unexpected virtual environment path: $VenvDir"
+  }
+  if (Test-Path -LiteralPath $VenvDir) {
+    Remove-Item -LiteralPath $VenvDir -Recurse -Force
+  }
+}
+
+function Test-VenvPip {
+  if (-not (Test-Path -LiteralPath $VenvPython)) {
+    return $false
+  }
+  return (Invoke-Quiet -FilePath $VenvPython -Arguments @("-m", "pip", "--version"))
+}
+
+function New-PythonVenv {
+  param([hashtable]$Launch)
+  Write-Host "Creating Python virtual environment with $($Launch.Display) ..."
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $Launch.FilePath @($Launch.Args + @("-m", "venv", $VenvDir))
+    $venvExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ($venvExitCode -ne 0) {
+    [Console]::Error.WriteLine("Could not create a Python virtual environment.")
+    [Console]::Error.WriteLine((Get-PythonVenvInstallHint -Launch $Launch))
+    if ((Test-Path -LiteralPath $VenvDir) -and -not (Test-VenvPip)) {
+      [Console]::Error.WriteLine("Removing incomplete virtual environment: $VenvDir")
+      Remove-PythonVenv
+    }
+    throw "Python virtual environment creation failed."
+  }
+
+  if (Test-VenvPip) {
+    return
+  }
+
+  [Console]::Error.WriteLine("The virtual environment was created without pip. Trying ensurepip ...")
+  if ((Invoke-Quiet -FilePath $VenvPython -Arguments @("-m", "ensurepip", "--upgrade")) -and (Test-VenvPip)) {
+    Write-Host "Bootstrapped pip in the virtual environment."
+    return
+  }
+
+  [Console]::Error.WriteLine("Could not bootstrap pip in the virtual environment.")
+  [Console]::Error.WriteLine((Get-PythonVenvInstallHint -Launch $Launch))
+  [Console]::Error.WriteLine("Removing incomplete virtual environment: $VenvDir")
+  Remove-PythonVenv
+  throw "Python virtual environment does not have pip."
 }
 
 function Test-FrontendStatic {
@@ -107,9 +210,22 @@ function Build-FrontendIfNeeded {
 
 function Ensure-PythonEnv {
   $launch = Get-PythonLaunch
+  if ((Test-Path -LiteralPath $VenvDir) -and -not (Test-Path -LiteralPath $VenvPython)) {
+    Write-Host "Detected incomplete Python virtual environment: $VenvDir"
+    Write-Host "Recreating Python virtual environment ..."
+    Remove-PythonVenv
+  }
   if (-not (Test-Path -LiteralPath $VenvPython)) {
-    Write-Host "Creating Python virtual environment with $($launch.Display) ..."
-    Invoke-Checked -FilePath $launch.FilePath -Arguments ($launch.Args + @("-m", "venv", $VenvDir))
+    New-PythonVenv -Launch $launch
+  } elseif (-not (Test-VenvPip)) {
+    Write-Host "Detected broken Python virtual environment: $VenvDir"
+    if ((Invoke-Quiet -FilePath $VenvPython -Arguments @("-m", "ensurepip", "--upgrade")) -and (Test-VenvPip)) {
+      Write-Host "Repaired pip in the existing Python virtual environment."
+    } else {
+      Write-Host "Recreating Python virtual environment ..."
+      Remove-PythonVenv
+      New-PythonVenv -Launch $launch
+    }
   }
 
   $previousErrorActionPreference = $ErrorActionPreference
@@ -227,6 +343,16 @@ function Ensure-InitialConfig {
     "      - DIRECT",
     "listeners: []",
     "rules:",
+    "  - DOMAIN,localhost,DIRECT",
+    "  - DOMAIN-SUFFIX,local,DIRECT",
+    "  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+    "  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+    "  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+    "  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+    "  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+    "  - IP-CIDR6,::1/128,DIRECT,no-resolve",
+    "  - IP-CIDR6,fc00::/7,DIRECT,no-resolve",
+    "  - IP-CIDR6,fe80::/10,DIRECT,no-resolve",
     "  - MATCH,NODE",
     ""
   ) -join [Environment]::NewLine
@@ -259,6 +385,63 @@ function Test-HttpReady {
     return $true
   } catch {
     return $false
+  }
+}
+
+function Wait-HttpDown {
+  param(
+    [string]$Name,
+    [string]$Url
+  )
+  $deadline = (Get-Date).AddSeconds(8)
+  while ((Get-Date) -lt $deadline) {
+    if (-not (Test-HttpReady -Url $Url)) {
+      return
+    }
+    Start-Sleep -Milliseconds 350
+  }
+  throw "$Name is still responding at $Url."
+}
+
+function Get-PortListenerPids {
+  param([int]$Port)
+  @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique)
+}
+
+function Stop-PortListeners {
+  param(
+    [string]$Name,
+    [int]$Port
+  )
+  $listenerPids = Get-PortListenerPids -Port $Port
+  if ($listenerPids.Count -eq 0) {
+    throw "$Name is responding, but no listener PID could be found for port $Port."
+  }
+
+  Write-Host "Stopping existing $Name on port $Port ..."
+  foreach ($listenerPid in $listenerPids) {
+    Stop-Process -Id $listenerPid -ErrorAction SilentlyContinue
+  }
+
+  $deadline = (Get-Date).AddSeconds(8)
+  while ((Get-Date) -lt $deadline) {
+    $stillRunning = $false
+    foreach ($listenerPid in $listenerPids) {
+      $process = Get-Process -Id $listenerPid -ErrorAction SilentlyContinue
+      if ($process) {
+        $stillRunning = $true
+      }
+    }
+    if (-not $stillRunning) {
+      return
+    }
+    Start-Sleep -Milliseconds 350
+  }
+
+  Write-Host "Existing $Name did not stop gracefully; forcing stop ..."
+  foreach ($listenerPid in $listenerPids) {
+    Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -315,9 +498,14 @@ $env:SYSTEM_PROXY_HELPER_HOST = "127.0.0.1"
 $env:SYSTEM_PROXY_HELPER_PORT = "$HelperPort"
 
 $processes = [System.Collections.ArrayList]::new()
+$managerRestarted = $false
 try {
-  [void]$processes.Add((Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)))
-  Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
+  if (Test-HttpReady -Url "$ControllerUrl/version") {
+    Write-Host "mihomo is already running: $ControllerUrl"
+  } else {
+    [void]$processes.Add((Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)))
+    Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
+  }
 
   if (-not $SkipHelper) {
     if (Test-HttpReady -Url $HelperUrl) {
@@ -328,8 +516,31 @@ try {
     }
   }
 
-  [void]$processes.Add((Start-LoggedProcess -Name "manager" -FilePath $VenvPython -ArgumentList @(Join-Path $ManagerDir "app.py")))
-  Wait-Http -Name "manager" -Url "$ManagerUrl/api/health"
+  if ($BuildFrontend -and (Test-HttpReady -Url "$ManagerUrl/api/health")) {
+    Write-Host "Frontend was rebuilt; restarting existing manager at $ManagerUrl"
+    Stop-PortListeners -Name "manager" -Port $ManagerPort
+    Wait-HttpDown -Name "manager" -Url "$ManagerUrl/api/health"
+    $managerRestarted = $true
+  }
+
+  if (Test-HttpReady -Url "$ManagerUrl/api/health") {
+    Write-Host "manager is already running: $ManagerUrl"
+  } else {
+    [void]$processes.Add((Start-LoggedProcess -Name "manager" -FilePath $VenvPython -ArgumentList @(Join-Path $ManagerDir "app.py")))
+    Wait-Http -Name "manager" -Url "$ManagerUrl/api/health"
+  }
+
+  if ($managerRestarted) {
+    Start-Sleep -Milliseconds 1200
+    if (-not (Test-HttpReady -Url "$ControllerUrl/version")) {
+      [void]$processes.Add((Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)))
+      Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
+    }
+    if ((-not $SkipHelper) -and (-not (Test-HttpReady -Url $HelperUrl))) {
+      [void]$processes.Add((Start-LoggedProcess -Name "system-proxy-helper" -FilePath $VenvPython -ArgumentList @($HelperScript)))
+      Wait-Http -Name "system-proxy-helper" -Url $HelperUrl
+    }
+  }
 
   Write-Host ""
   Write-Host "Ready."

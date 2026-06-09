@@ -96,7 +96,13 @@
             <span v-else class="muted-text">未绑定</span>
           </div>
           <div class="node-actions" role="cell">
-            <el-button :icon="Promotion" :loading="manager.testingDelays.value" size="small" @click="manager.handleTestAllDelays">
+            <el-button
+              :disabled="manager.testingDelays.value"
+              :icon="Promotion"
+              :loading="manager.nodeDelayTesting(node)"
+              size="small"
+              @click="manager.handleTestNodeDelay(node)"
+            >
               测速
             </el-button>
             <el-button :icon="Link" size="small" type="primary" plain @click="bindNode(node)">

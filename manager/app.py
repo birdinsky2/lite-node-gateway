@@ -105,6 +105,19 @@ DEFAULT_SYSTEM_PROXY_BYPASS_RULES = [
     "<local>",
 ]
 
+MIHOMO_DIRECT_RULES = [
+    "DOMAIN,localhost,DIRECT",
+    "DOMAIN-SUFFIX,local,DIRECT",
+    "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+    "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+    "IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+    "IP-CIDR6,::1/128,DIRECT,no-resolve",
+    "IP-CIDR6,fc00::/7,DIRECT,no-resolve",
+    "IP-CIDR6,fe80::/10,DIRECT,no-resolve",
+]
+
 
 DEFAULT_DNS = {
     "enable": True,
@@ -391,7 +404,23 @@ def test_node_delays(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tested_at": started,
                 **result,
             }
-    return [results.get(node["id"], {"node_id": node["id"], "ok": False, "alive": False, "delay_ms": None, "error": "missing proxy name", "tested_at": started}) for node in nodes]
+    return [
+        results.get(
+            node["id"],
+            {
+                "node_id": node["id"],
+                "name": node["name"],
+                "subscription_id": node["subscription_id"],
+                "subscription_name": node["subscription_name"],
+                "ok": False,
+                "alive": False,
+                "delay_ms": None,
+                "error": "missing proxy name",
+                "tested_at": started,
+            },
+        )
+        for node in nodes
+    ]
 
 
 def decode_response_text(content: bytes) -> str:
@@ -967,7 +996,7 @@ def build_mihomo_config(state: dict[str, Any]) -> tuple[dict[str, Any], list[dic
         "proxies": proxies,
         "proxy-groups": [auto_group, node_group],
         "listeners": listeners,
-        "rules": ["MATCH,NODE"],
+        "rules": [*MIHOMO_DIRECT_RULES, "MATCH,NODE"],
     }
     return config, resolved_bindings
 
@@ -1221,8 +1250,14 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         subscription = self.find_subscription(state, subscription_id)
         if not subscription.get("enabled", True):
             raise ApiError(400, "订阅已停用。")
+        body = self.read_body_json()
+        node_id = str(body.get("node_id") or "").strip()
         nodes, _ = collect_nodes(state, only_enabled=True)
         subscription_nodes_to_test = [node for node in nodes if node["subscription_id"] == subscription_id]
+        if node_id:
+            subscription_nodes_to_test = [node for node in subscription_nodes_to_test if node["id"] == node_id]
+            if not subscription_nodes_to_test:
+                raise ApiError(404, "节点不存在或订阅已停用。")
         if not subscription_nodes_to_test:
             raise ApiError(404, "没有可测速的节点。")
         results = test_node_delays(subscription_nodes_to_test)

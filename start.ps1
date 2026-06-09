@@ -55,6 +55,66 @@ function Get-PythonLaunch {
   throw "Python was not found. Install Python or add it to PATH before starting the system proxy helper."
 }
 
+function Invoke-DockerCommand {
+  param([string[]]$Arguments)
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & docker @Arguments 2>&1
+    return @{
+      ExitCode = $LASTEXITCODE
+      Output = (($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine)
+    }
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+function Write-DockerAccessHelp {
+  param([string]$DockerError)
+
+  [Console]::Error.WriteLine("Docker is installed, but this user cannot access the Docker API.")
+  if (-not [string]::IsNullOrWhiteSpace($DockerError)) {
+    [Console]::Error.WriteLine($DockerError)
+  }
+
+  $context = Invoke-DockerCommand -Arguments @("context", "show")
+  if ($context.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($context.Output)) {
+    [Console]::Error.WriteLine("Docker context: $($context.Output.Trim())")
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:DOCKER_HOST)) {
+    [Console]::Error.WriteLine("DOCKER_HOST: $env:DOCKER_HOST")
+    [Console]::Error.WriteLine("Check that this Docker endpoint is reachable and that your user has permission to use it.")
+    return
+  }
+
+  $defaultPipe = "\\.\pipe\docker_engine"
+  [Console]::Error.WriteLine("Default Windows Docker endpoint is usually: npipe:////./pipe/docker_engine")
+  if (-not (Test-Path -LiteralPath $defaultPipe -ErrorAction SilentlyContinue)) {
+    [Console]::Error.WriteLine("The Docker named pipe was not found. Docker Desktop or Docker Engine may not be running.")
+  }
+
+  $services = Get-Service -Name "com.docker.service", "docker" -ErrorAction SilentlyContinue
+  if ($services) {
+    foreach ($service in $services) {
+      [Console]::Error.WriteLine("Service $($service.Name): $($service.Status)")
+    }
+  }
+
+  [Console]::Error.WriteLine("Start Docker Desktop or check the Docker service, then rerun this script.")
+}
+
+function Ensure-DockerAccess {
+  $result = Invoke-DockerCommand -Arguments @("ps")
+  if ($result.ExitCode -eq 0) {
+    return
+  }
+
+  Write-DockerAccessHelp -DockerError $result.Output
+  throw "Docker API is not accessible."
+}
+
 function Start-SystemProxyHelper {
   if (-not (Test-Path -LiteralPath $HelperScript)) {
     throw "System proxy helper script was not found: $HelperScript"
@@ -120,6 +180,7 @@ if (-not $SkipDocker) {
   if (-not (Test-Path -LiteralPath $ComposeFile)) {
     throw "docker-compose.yml was not found: $ComposeFile"
   }
+  Ensure-DockerAccess
 
   $composeArgs = @("compose", "-f", $ComposeFile, "up", "-d", "--remove-orphans")
   if ($Build) {

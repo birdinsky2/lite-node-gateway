@@ -75,6 +75,78 @@ listener_pids() {
   fi
 }
 
+docker_socket_path() {
+  local docker_host="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+  if [[ "$docker_host" == unix://* ]]; then
+    printf '%s\n' "${docker_host#unix://}"
+    return 0
+  fi
+  return 1
+}
+
+print_docker_access_help() {
+  local docker_error="$1"
+  local socket_path
+  local current_user
+  local socket_group
+  local user_groups
+
+  echo "Docker is installed, but this user cannot access the Docker API." >&2
+  if [[ -n "$docker_error" ]]; then
+    echo "$docker_error" >&2
+  fi
+
+  if ! socket_path="$(docker_socket_path)"; then
+    echo "DOCKER_HOST is set to: ${DOCKER_HOST:-}" >&2
+    echo "Check that this Docker endpoint is reachable and that your user has permission to use it." >&2
+    return
+  fi
+
+  echo "Docker socket: $socket_path" >&2
+  if [[ ! -S "$socket_path" ]]; then
+    echo "The Docker socket does not exist. Docker may not be running." >&2
+    echo "Check Docker status, for example: sudo systemctl status docker" >&2
+    return
+  fi
+
+  current_user="$(id -un 2>/dev/null || true)"
+  socket_group="$(stat -c '%G' "$socket_path" 2>/dev/null || true)"
+  user_groups="$(id -nG 2>/dev/null || true)"
+
+  if [[ -n "$socket_group" ]]; then
+    echo "Socket group: $socket_group" >&2
+  fi
+  if [[ -n "$current_user" ]]; then
+    echo "Current user: $current_user" >&2
+  fi
+  if [[ -n "$user_groups" ]]; then
+    echo "Current user groups: $user_groups" >&2
+  fi
+
+  if [[ -n "$socket_group" && -n "$current_user" && -n "$user_groups" && " $user_groups " != *" $socket_group "* ]]; then
+    cat >&2 <<EOF
+If $socket_group is the Docker access group on this system, add the user and then log out and back in:
+  sudo usermod -aG $socket_group $current_user
+EOF
+  elif [[ -n "$socket_group" ]]; then
+    cat >&2 <<EOF
+The user already appears to be in the socket group. If group membership changed recently, log out and back in, or run:
+  newgrp $socket_group
+EOF
+  fi
+}
+
+ensure_docker_access() {
+  local docker_error
+  if docker ps >/dev/null 2>&1; then
+    return
+  fi
+
+  docker_error="$(docker ps 2>&1 >/dev/null || true)"
+  print_docker_access_help "$docker_error"
+  exit 1
+}
+
 start_helper() {
   if [[ ! -f "$HELPER_SCRIPT" ]]; then
     echo "System proxy helper script was not found: $HELPER_SCRIPT" >&2
@@ -131,6 +203,7 @@ if [[ "$SKIP_DOCKER" -eq 0 ]]; then
     echo "docker was not found in PATH." >&2
     exit 1
   fi
+  ensure_docker_access
 
   echo "Starting Docker services ..."
   compose_args=(compose -f "$COMPOSE_FILE" up -d --remove-orphans)

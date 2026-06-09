@@ -155,7 +155,11 @@ export function useGatewayDerived(state: GatewayManagerState) {
   }
 
   function nodeDelay(node: NodeItem) {
-    return state.nodeDelayResults.value[node.id];
+    return state.nodeDelayResults.value[nodeKey(node)];
+  }
+
+  function nodeDelayTesting(node: NodeItem) {
+    return state.testingNodeDelayKeys.value.has(nodeKey(node));
   }
 
   function sortableDelay(node: NodeItem) {
@@ -167,7 +171,7 @@ export function useGatewayDerived(state: GatewayManagerState) {
 
   function nodeDelayLabel(node: NodeItem) {
     const result = nodeDelay(node);
-    if (state.testingDelays.value && !result) return "测速中";
+    if ((state.testingDelays.value || nodeDelayTesting(node)) && !result) return "测速中";
     if (!result) return "未测";
     if (result.ok && typeof result.delay_ms === "number" && result.delay_ms > 0) return `${result.delay_ms} ms`;
     return "超时";
@@ -228,6 +232,7 @@ export function useGatewayDerived(state: GatewayManagerState) {
     nodeIsOpened,
     nodeBindingLabel,
     nodeDelayLabel,
+    nodeDelayTesting,
     systemProxyNodeDelayLabel,
     nodeDelayTagType,
     bindingTagType,

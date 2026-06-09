@@ -21,6 +21,19 @@ def quoted_string_representer(dumper, value):
 
 GatewayYamlDumper.add_representer(QuotedString, quoted_string_representer)
 
+DIRECT_RULES = [
+    "DOMAIN,localhost,DIRECT",
+    "DOMAIN-SUFFIX,local,DIRECT",
+    "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+    "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+    "IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+    "IP-CIDR6,::1/128,DIRECT,no-resolve",
+    "IP-CIDR6,fc00::/7,DIRECT,no-resolve",
+    "IP-CIDR6,fe80::/10,DIRECT,no-resolve",
+]
+
 
 def quote_reality_yaml_scalars(text: str) -> str:
     def replace(match):
@@ -124,7 +137,7 @@ def build_config(source, mixed_port, controller_port, secret, group_name, auto_g
                 "proxies": selectable,
             },
         ],
-        "rules": [f"MATCH,{group_name}"],
+        "rules": [*DIRECT_RULES, f"MATCH,{group_name}"],
     }
 
 
