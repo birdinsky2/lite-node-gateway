@@ -13,14 +13,22 @@ mkdir -p /var/lib/lite-node-gateway/subscriptions /var/log/lite-node-gateway
 chown -R lite-node-gateway:lite-node-gateway /var/lib/lite-node-gateway /var/log/lite-node-gateway
 chmod 0750 /var/lib/lite-node-gateway /var/log/lite-node-gateway
 
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload
-  systemctl enable lite-node-gateway-mihomo.service >/dev/null || true
-  systemctl enable lite-node-gateway-manager.service >/dev/null || true
+# 仅当 systemd 真正作为 init 运行时才操作服务。
+# 注意：容器/WSL/chroot 里 systemctl 命令可能存在，但 systemd 并非 PID1，
+# 此时 `systemctl daemon-reload` 会失败（Failed to connect to bus）。
+# Debian 打包惯例是用 /run/systemd/system 目录判断 systemd 是否在运行。
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  systemctl enable lite-node-gateway-mihomo.service >/dev/null 2>&1 || true
+  systemctl enable lite-node-gateway-manager.service >/dev/null 2>&1 || true
   if [ "${LITE_NODE_GATEWAY_NO_START:-0}" != "1" ]; then
     systemctl restart lite-node-gateway-mihomo.service || true
     systemctl restart lite-node-gateway-manager.service || true
   fi
+else
+  echo "systemd is not running as init; skipping service enable/start." >&2
+  echo "After reboot (or on a systemd host) the services will be managed by systemd," >&2
+  echo "or start manually via: /opt/lite-node-gateway/bin/lite-node-gateway-mihomo.sh" >&2
 fi
 
 exit 0

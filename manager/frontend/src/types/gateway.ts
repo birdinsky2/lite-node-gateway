@@ -95,6 +95,14 @@ export interface ApiEnvelope {
   error?: string;
 }
 
+export interface ProbeAttempt extends ApiEnvelope {
+  target_url?: string | null;
+  proxy?: string;
+  status?: number;
+  elapsed_ms: number;
+  body?: string;
+}
+
 export interface CreateSubscriptionResponse extends ApiEnvelope {
   subscription: Subscription;
 }
@@ -105,9 +113,12 @@ export interface NodeListResponse extends ApiEnvelope {
 }
 
 export interface ProbeResponse extends ApiEnvelope {
+  target_url?: string | null;
+  proxy?: string;
   status?: number;
   elapsed_ms: number;
   body?: string;
+  attempts?: ProbeAttempt[];
 }
 
 export interface SystemProxyResponse extends ApiEnvelope {

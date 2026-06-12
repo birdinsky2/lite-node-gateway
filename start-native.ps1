@@ -47,14 +47,38 @@ function Require-Command {
   }
 }
 
-function Get-PythonLaunch {
-  $python = Get-Command python -ErrorAction SilentlyContinue
-  if ($python) {
-    return @{ FilePath = $python.Source; Args = @(); Display = "python" }
+function Test-PythonLaunch {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments
+  )
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $FilePath @($Arguments + @("-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)")) *> $null
+    return ($LASTEXITCODE -eq 0)
+  } catch {
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
   }
-  $py = Get-Command py -ErrorAction SilentlyContinue
-  if ($py) {
-    return @{ FilePath = $py.Source; Args = @("-3"); Display = "py -3" }
+}
+
+function Get-PythonLaunch {
+  $candidates = @(
+    @{ Command = "python"; Args = @(); Display = "python" },
+    @{ Command = "py"; Args = @("-3"); Display = "py -3" },
+    @{ Command = "python3"; Args = @(); Display = "python3" }
+  )
+  foreach ($candidate in $candidates) {
+    $command = Get-Command $candidate.Command -ErrorAction SilentlyContinue
+    if (-not $command) {
+      continue
+    }
+    if (Test-PythonLaunch -FilePath $command.Source -Arguments $candidate.Args) {
+      return @{ FilePath = $command.Source; Args = $candidate.Args; Display = $candidate.Display }
+    }
+    Write-Host "Skipping unusable Python launcher: $($candidate.Display)"
   }
   throw "Python 3 was not found. Install Python 3.11+ and rerun this script."
 }
@@ -478,6 +502,105 @@ function Stop-StartedProcesses {
   }
 }
 
+function Stop-ManagedProcess {
+  param($Process)
+  if ($Process -and -not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue
+    $Process.WaitForExit(500) | Out-Null
+    if (-not $Process.HasExited) {
+      Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Start-Mihomo {
+  $script:mihomoProcess = Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)
+  [void]$script:processes.Add($script:mihomoProcess)
+  Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
+}
+
+function Start-SystemProxyHelper {
+  $script:helperProcess = Start-LoggedProcess -Name "system-proxy-helper" -FilePath $VenvPython -ArgumentList @($HelperScript)
+  [void]$script:processes.Add($script:helperProcess)
+  Wait-Http -Name "system-proxy-helper" -Url $HelperUrl
+}
+
+function Start-Manager {
+  $script:managerProcess = Start-LoggedProcess -Name "manager" -FilePath $VenvPython -ArgumentList @(Join-Path $ManagerDir "app.py")
+  [void]$script:processes.Add($script:managerProcess)
+  Wait-Http -Name "manager" -Url "$ManagerUrl/api/health"
+}
+
+function Ensure-MihomoRunning {
+  # If the managed process is still alive, never restart it. Even if the Core
+  # API is briefly unreachable (it may just be busy), killing a live process
+  # would cut off requests it is currently handling.
+  if ($script:mihomoProcess -and -not $script:mihomoProcess.HasExited) {
+    return
+  }
+  # No managed live process: an external listener may exist, or it has exited.
+  if (Test-HttpReady -Url "$ControllerUrl/version") {
+    return
+  }
+  Write-Host "mihomo is not running; starting ..."
+  Stop-ManagedProcess -Process $script:mihomoProcess
+  Start-Mihomo
+}
+
+function Ensure-SystemProxyHelperRunning {
+  if ($SkipHelper) {
+    return
+  }
+  # If the managed process is still alive, never restart it (even if the
+  # Helper API is briefly unreachable).
+  if ($script:helperProcess -and -not $script:helperProcess.HasExited) {
+    return
+  }
+  if (Test-HttpReady -Url $HelperUrl) {
+    return
+  }
+  Write-Host "System proxy helper is not running; starting ..."
+  Stop-ManagedProcess -Process $script:helperProcess
+  Start-SystemProxyHelper
+}
+
+function Ensure-ManagerRunning {
+  # Critical: only restart when the process has actually exited. A long-running
+  # operation such as "test all nodes" can make /api/health briefly unreachable,
+  # but the process is still alive and serving requests. Killing it here would
+  # abort the in-flight request, which the browser reports as "Failed to fetch".
+  if ($script:managerProcess -and -not $script:managerProcess.HasExited) {
+    return
+  }
+  if (Test-HttpReady -Url "$ManagerUrl/api/health") {
+    return
+  }
+  Write-Host "manager is not running; starting ..."
+  Stop-ManagedProcess -Process $script:managerProcess
+  Start-Manager
+}
+
+function Invoke-WatchdogOnce {
+  Ensure-MihomoRunning
+  Ensure-SystemProxyHelperRunning
+  Ensure-ManagerRunning
+}
+
+function Sync-ManagerConfig {
+  try {
+    Invoke-WebRequest `
+      -Uri "$ManagerUrl/api/rebuild" `
+      -Method Post `
+      -Body "{}" `
+      -ContentType "application/json" `
+      -UseBasicParsing `
+      -TimeoutSec 20 | Out-Null
+    Write-Host "Synced Mihomo config through manager."
+  } catch {
+    [Console]::Error.WriteLine("Manager config sync failed. Open the Manager and click rebuild if nodes look stale. $($_.Exception.Message)")
+  }
+}
+
 Build-FrontendIfNeeded
 Ensure-PythonEnv
 Ensure-Mihomo
@@ -498,21 +621,22 @@ $env:SYSTEM_PROXY_HELPER_HOST = "127.0.0.1"
 $env:SYSTEM_PROXY_HELPER_PORT = "$HelperPort"
 
 $processes = [System.Collections.ArrayList]::new()
+$mihomoProcess = $null
+$helperProcess = $null
+$managerProcess = $null
 $managerRestarted = $false
 try {
   if (Test-HttpReady -Url "$ControllerUrl/version") {
     Write-Host "mihomo is already running: $ControllerUrl"
   } else {
-    [void]$processes.Add((Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)))
-    Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
+    Start-Mihomo
   }
 
   if (-not $SkipHelper) {
     if (Test-HttpReady -Url $HelperUrl) {
       Write-Host "System proxy helper is already running: $HelperUrl"
     } else {
-      [void]$processes.Add((Start-LoggedProcess -Name "system-proxy-helper" -FilePath $VenvPython -ArgumentList @($HelperScript)))
-      Wait-Http -Name "system-proxy-helper" -Url $HelperUrl
+      Start-SystemProxyHelper
     }
   }
 
@@ -526,20 +650,14 @@ try {
   if (Test-HttpReady -Url "$ManagerUrl/api/health") {
     Write-Host "manager is already running: $ManagerUrl"
   } else {
-    [void]$processes.Add((Start-LoggedProcess -Name "manager" -FilePath $VenvPython -ArgumentList @(Join-Path $ManagerDir "app.py")))
-    Wait-Http -Name "manager" -Url "$ManagerUrl/api/health"
+    Start-Manager
   }
+  Sync-ManagerConfig
 
   if ($managerRestarted) {
     Start-Sleep -Milliseconds 1200
-    if (-not (Test-HttpReady -Url "$ControllerUrl/version")) {
-      [void]$processes.Add((Start-LoggedProcess -Name "mihomo" -FilePath $MihomoExe -ArgumentList @("-d", $DataDir, "-f", $ConfigFile)))
-      Wait-Http -Name "mihomo" -Url "$ControllerUrl/version"
-    }
-    if ((-not $SkipHelper) -and (-not (Test-HttpReady -Url $HelperUrl))) {
-      [void]$processes.Add((Start-LoggedProcess -Name "system-proxy-helper" -FilePath $VenvPython -ArgumentList @($HelperScript)))
-      Wait-Http -Name "system-proxy-helper" -Url $HelperUrl
-    }
+    Ensure-MihomoRunning
+    Ensure-SystemProxyHelperRunning
   }
 
   Write-Host ""
@@ -558,15 +676,15 @@ try {
   }
 
   if ($RunSeconds -gt 0) {
-    Start-Sleep -Seconds $RunSeconds
+    $deadline = (Get-Date).AddSeconds($RunSeconds)
+    while ((Get-Date) -lt $deadline) {
+      Invoke-WatchdogOnce
+      Start-Sleep -Seconds 1
+    }
     Write-Host "Timed run finished."
   } else {
     while ($true) {
-      foreach ($process in $processes) {
-        if ($process.HasExited) {
-          throw "A child process exited unexpectedly. PID: $($process.Id), exit code: $($process.ExitCode)"
-        }
-      }
+      Invoke-WatchdogOnce
       Start-Sleep -Seconds 1
     }
   }

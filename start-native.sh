@@ -89,6 +89,13 @@ need_cmd() {
   fi
 }
 
+python3_works() {
+  command -v python3 >/dev/null 2>&1 && python3 - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+}
+
 python_venv_install_hint() {
   local version
   version="$(python3 - <<'PY' 2>/dev/null || true
@@ -171,7 +178,7 @@ build_frontend_if_needed() {
 }
 
 ensure_python_env() {
-  need_cmd python3 || {
+  python3_works || {
     echo "Install Python 3.11+ and rerun this script." >&2
     echo "Debian/Ubuntu/Deepin: sudo apt install python3 python3-venv python3-pip" >&2
     exit 1
@@ -405,7 +412,111 @@ start_logged_process() {
   shift
   echo "Starting $name ..."
   "$@" >"$LOG_DIR/$name.out.log" 2>"$LOG_DIR/$name.err.log" &
-  PIDS+=("$!")
+  STARTED_PID="$!"
+  PIDS+=("$STARTED_PID")
+}
+
+stop_managed_pid() {
+  local pid="${1:-}"
+  if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    sleep 0.35
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+start_mihomo() {
+  start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
+  MIHOMO_PID="$STARTED_PID"
+  wait_http mihomo "$CONTROLLER_URL/version"
+}
+
+start_system_proxy_helper() {
+  start_logged_process system-proxy-helper "$VENV_PYTHON" "$HELPER_SCRIPT"
+  HELPER_PID="$STARTED_PID"
+  wait_http system-proxy-helper "$HELPER_URL"
+}
+
+start_manager() {
+  start_logged_process manager "$VENV_PYTHON" "$MANAGER_DIR/app.py"
+  MANAGER_PID="$STARTED_PID"
+  wait_http manager "$MANAGER_URL/api/health"
+}
+
+ensure_mihomo_running() {
+  # 托管进程仍在运行 → 绝不重启。即使 Core API 暂时探不通（可能正忙），
+  # 也不能把活着的进程杀掉，否则会掐断正在处理的请求。
+  if [[ -n "${MIHOMO_PID:-}" ]] && kill -0 "$MIHOMO_PID" >/dev/null 2>&1; then
+    return
+  fi
+  # 没有托管的存活进程：可能是外部已有监听者，或进程已退出。
+  if is_http_ready "$CONTROLLER_URL/version"; then
+    return
+  fi
+  echo "mihomo is not running; starting ..."
+  stop_managed_pid "${MIHOMO_PID:-}"
+  start_mihomo
+}
+
+ensure_system_proxy_helper_running() {
+  if [[ "$SKIP_HELPER" -eq 1 ]]; then
+    return
+  fi
+  # 托管进程仍在运行 → 绝不重启（即使 Helper API 暂时探不通）。
+  if [[ -n "${HELPER_PID:-}" ]] && kill -0 "$HELPER_PID" >/dev/null 2>&1; then
+    return
+  fi
+  # 没有托管的存活进程：可能是外部已有监听者，或进程已退出。
+  if is_http_ready "$HELPER_URL"; then
+    return
+  fi
+  echo "System proxy helper is not running; starting ..."
+  stop_managed_pid "${HELPER_PID:-}"
+  start_system_proxy_helper
+}
+
+ensure_manager_running() {
+  # 托管进程仍在运行 → 绝不重启。一键测速等耗时操作期间 /api/health 可能短暂
+  # 探不通，但进程是活的，绝不能杀，否则会掐断正在处理的请求（表现为前端 Failed to fetch）。
+  if [[ -n "${MANAGER_PID:-}" ]] && kill -0 "$MANAGER_PID" >/dev/null 2>&1; then
+    return
+  fi
+  # 没有托管的存活进程：可能是外部已有监听者，或进程已退出。
+  if is_http_ready "$MANAGER_URL/api/health"; then
+    return
+  fi
+  echo "manager is not running; starting ..."
+  stop_managed_pid "${MANAGER_PID:-}"
+  start_manager
+}
+
+watchdog_once() {
+  ensure_mihomo_running
+  ensure_system_proxy_helper_running
+  ensure_manager_running
+}
+
+sync_manager_config() {
+  if "$VENV_PYTHON" - "$MANAGER_URL/api/rebuild" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+request = urllib.request.Request(
+    sys.argv[1],
+    data=b"{}",
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(request, timeout=20) as response:
+    raise SystemExit(0 if response.status < 500 else 1)
+PY
+  then
+    echo "Synced Mihomo config through manager."
+  else
+    echo "Manager config sync failed. Open the Manager and click rebuild if nodes look stale." >&2
+  fi
 }
 
 cleanup() {
@@ -441,16 +552,14 @@ export SYSTEM_PROXY_HELPER_PORT="$HELPER_PORT"
 if is_http_ready "$CONTROLLER_URL/version"; then
   echo "mihomo is already running: $CONTROLLER_URL"
 else
-  start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
-  wait_http mihomo "$CONTROLLER_URL/version"
+  start_mihomo
 fi
 
 if [[ "$SKIP_HELPER" -eq 0 ]]; then
   if is_http_ready "$HELPER_URL"; then
     echo "System proxy helper is already running: $HELPER_URL"
   else
-    start_logged_process system-proxy-helper "$VENV_PYTHON" "$HELPER_SCRIPT"
-    wait_http system-proxy-helper "$HELPER_URL"
+    start_system_proxy_helper
   fi
 fi
 
@@ -464,20 +573,14 @@ fi
 if is_http_ready "$MANAGER_URL/api/health"; then
   echo "manager is already running: $MANAGER_URL"
 else
-  start_logged_process manager "$VENV_PYTHON" "$MANAGER_DIR/app.py"
-  wait_http manager "$MANAGER_URL/api/health"
+  start_manager
 fi
+sync_manager_config
 
 if [[ "${MANAGER_RESTARTED:-0}" -eq 1 ]]; then
   sleep 1.2
-  if ! is_http_ready "$CONTROLLER_URL/version"; then
-    start_logged_process mihomo "$MIHOMO_BIN" -d "$DATA_DIR" -f "$CONFIG_FILE"
-    wait_http mihomo "$CONTROLLER_URL/version"
-  fi
-  if [[ "$SKIP_HELPER" -eq 0 ]] && ! is_http_ready "$HELPER_URL"; then
-    start_logged_process system-proxy-helper "$VENV_PYTHON" "$HELPER_SCRIPT"
-    wait_http system-proxy-helper "$HELPER_URL"
-  fi
+  ensure_mihomo_running
+  ensure_system_proxy_helper_running
 fi
 
 cat <<EOF
@@ -500,16 +603,15 @@ if [[ "$NO_BROWSER" -eq 0 ]] && command -v xdg-open >/dev/null 2>&1; then
 fi
 
 if [[ "$RUN_SECONDS" -gt 0 ]]; then
-  sleep "$RUN_SECONDS"
+  deadline=$((SECONDS + RUN_SECONDS))
+  while (( SECONDS < deadline )); do
+    watchdog_once
+    sleep 1
+  done
   echo "Timed run finished."
 else
   while true; do
-    for pid in "${PIDS[@]}"; do
-      if ! kill -0 "$pid" >/dev/null 2>&1; then
-        echo "A child process exited unexpectedly. PID: $pid" >&2
-        exit 1
-      fi
-    done
+    watchdog_once
     sleep 1
   done
 fi

@@ -68,6 +68,8 @@ NODE_DELAY_WORKERS = int(os.environ.get("NODE_DELAY_WORKERS", "8"))
 SYSTEM_PROXY_HELPER_URL = os.environ.get("SYSTEM_PROXY_HELPER_URL", "http://host.docker.internal:18089").rstrip("/")
 SYSTEM_PROXY_SERVER = os.environ.get("SYSTEM_PROXY_SERVER", "127.0.0.1:7896")
 SYSTEM_PROXY_TEST_URL = os.environ.get("SYSTEM_PROXY_TEST_URL", "https://ipinfo.io/json")
+SYSTEM_PROXY_TEST_URL_OVERRIDDEN = "SYSTEM_PROXY_TEST_URL" in os.environ
+SYSTEM_PROXY_TEST_URLS = os.environ.get("SYSTEM_PROXY_TEST_URLS", "")
 SYSTEM_PROXY_TEST_PROXY = os.environ.get("SYSTEM_PROXY_TEST_PROXY", "http://mihomo:7897")
 PORT_PROBE_PROXY_HOST = os.environ.get("PORT_PROBE_PROXY_HOST", "mihomo")
 
@@ -78,6 +80,13 @@ MANAGER_PORT = int(os.environ.get("MANAGER_PORT", "8080"))
 
 BUILTIN_TARGETS = {"DIRECT", "REJECT", "GLOBAL", "AUTO", "NODE"}
 STATE_LOCK = threading.RLock()
+
+DEFAULT_PROBE_TARGET_URLS = [
+    "http://www.gstatic.com/generate_204",
+    "https://cp.cloudflare.com/generate_204",
+    "https://api.ipify.org?format=json",
+    "https://ipinfo.io/json",
+]
 
 DEFAULT_SYSTEM_PROXY_BYPASS_RULES = [
     "localhost",
@@ -341,6 +350,169 @@ def core_status() -> dict[str, Any]:
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def mihomo_response_message(response: requests.Response, limit: int = 300) -> str:
+    try:
+        body = response.json() if response.text else {}
+    except Exception:
+        body = {}
+    if isinstance(body, dict):
+        for key in ("message", "error"):
+            value = body.get(key)
+            if value:
+                return str(value)[:limit]
+    text = (response.text or "").strip()
+    return text[:limit] if text else f"HTTP {response.status_code}"
+
+
+def mihomo_unavailable_message(exc: Exception) -> str:
+    return f"Mihomo core unavailable at {MIHOMO_API_URL}: {exc}"
+
+
+def mihomo_proxy_names() -> set[str]:
+    try:
+        response = mihomo_request("GET", "/proxies", timeout=8)
+    except requests.RequestException as exc:
+        raise ApiError(502, mihomo_unavailable_message(exc)) from exc
+    if response.status_code >= 400:
+        raise ApiError(502, f"Mihomo proxy list failed: HTTP {response.status_code} {mihomo_response_message(response)}")
+    try:
+        body = response.json() if response.text else {}
+    except Exception as exc:
+        raise ApiError(502, f"Mihomo proxy list returned invalid JSON: {exc}") from exc
+    proxies = body.get("proxies") if isinstance(body, dict) else None
+    if isinstance(proxies, dict):
+        return {str(name) for name in proxies.keys()}
+    return set()
+
+
+def short_name_list(names: set[str], limit: int = 3) -> str:
+    sample = sorted(names)[:limit]
+    suffix = "" if len(names) <= limit else f", +{len(names) - limit} more"
+    return ", ".join(sample) + suffix
+
+
+def ensure_mihomo_config_contains(
+    state: dict[str, Any],
+    proxy_names: list[str],
+    force_reload: bool = False,
+) -> dict[str, Any] | None:
+    wanted = {str(name).strip() for name in proxy_names if str(name or "").strip()}
+    if not wanted:
+        return None
+
+    missing = wanted
+    if not force_reload:
+        current = mihomo_proxy_names()
+        missing = wanted - current
+        if not missing:
+            return None
+
+    try:
+        result = rebuild_and_reload(state)
+    except Exception as exc:
+        raise ApiError(502, f"Mihomo config is stale and reload failed: {exc}") from exc
+
+    current = mihomo_proxy_names()
+    missing = wanted - current
+    if missing:
+        raise ApiError(
+            502,
+            "Mihomo config reload completed, but these proxies are still missing: "
+            f"{short_name_list(missing)}. Refresh the subscription or inspect data/config.yaml.",
+        )
+    return result
+
+
+def is_proxy_not_exist_error(message: str) -> bool:
+    return "proxy not exist" in message.lower()
+
+
+def split_probe_urls(raw: str) -> list[str]:
+    urls: list[str] = []
+    for item in re.split(r"[\s,;]+", raw or ""):
+        value = item.strip()
+        if value.startswith(("http://", "https://")):
+            urls.append(value)
+    return urls
+
+
+def unique_probe_urls(urls: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        value = str(url or "").strip()
+        if not value or value in seen or not value.startswith(("http://", "https://")):
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def system_proxy_probe_urls(primary_url: str | None = None) -> list[str]:
+    urls: list[str] = []
+    if primary_url:
+        urls.append(primary_url)
+    if SYSTEM_PROXY_TEST_URLS.strip():
+        urls.extend(split_probe_urls(SYSTEM_PROXY_TEST_URLS))
+    elif SYSTEM_PROXY_TEST_URL_OVERRIDDEN:
+        urls.append(SYSTEM_PROXY_TEST_URL)
+    urls.extend(DEFAULT_PROBE_TARGET_URLS)
+    return unique_probe_urls(urls)
+
+
+def probe_failure_summary(attempts: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in attempts:
+        target = str(item.get("target_url") or "-")
+        if item.get("status") is not None:
+            detail = f"HTTP {item['status']}"
+        else:
+            detail = str(item.get("error") or "request failed")
+        parts.append(f"{target}: {detail}")
+    return "; ".join(parts)
+
+
+def probe_via_proxy(target_urls: list[str], proxies: dict[str, str], timeout: int = 25) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    proxy_label = proxies.get("https") or proxies.get("http") or "-"
+    headers = {"User-Agent": "LiteNodeGateway/1.0"}
+    for target_url in unique_probe_urls(target_urls):
+        started = dt.datetime.now()
+        try:
+            response = requests.get(target_url, proxies=proxies, headers=headers, timeout=timeout)
+            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
+            attempt = {
+                "ok": response.ok,
+                "target_url": target_url,
+                "proxy": proxy_label,
+                "status": response.status_code,
+                "elapsed_ms": elapsed_ms,
+                "body": response.text[:1200],
+            }
+            attempts.append(attempt)
+            if response.ok:
+                return {**attempt, "attempts": attempts}
+        except requests.RequestException as exc:
+            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
+            attempts.append(
+                {
+                    "ok": False,
+                    "target_url": target_url,
+                    "proxy": proxy_label,
+                    "elapsed_ms": elapsed_ms,
+                    "error": str(exc),
+                }
+            )
+
+    fallback = attempts[-1] if attempts else {"target_url": None, "proxy": proxy_label, "elapsed_ms": 0}
+    return {
+        **fallback,
+        "ok": False,
+        "attempts": attempts,
+        "error": f"All probe targets failed via {proxy_label}: {probe_failure_summary(attempts)}",
+    }
 
 
 def latest_proxy_delay(proxy: dict[str, Any]) -> int | None:
@@ -876,20 +1048,44 @@ def find_node_for_system_proxy(
     raise ApiError(400, "Please select a node before enabling the system proxy.")
 
 
-def select_mihomo_node(node: dict[str, Any]) -> dict[str, Any]:
-    response = mihomo_request(
-        "PUT",
-        f"/proxies/{urllib.parse.quote('NODE', safe='')}",
-        json={"name": node["proxy_name"]},
-        timeout=10,
-    )
+def update_mihomo_selector(proxy_name: str) -> dict[str, Any]:
+    try:
+        response = mihomo_request(
+            "PUT",
+            f"/proxies/{urllib.parse.quote('NODE', safe='')}",
+            json={"name": proxy_name},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise ApiError(502, mihomo_unavailable_message(exc)) from exc
     if response.status_code >= 400:
-        raise ApiError(502, f"Mihomo node switch failed: HTTP {response.status_code} {response.text[:240]}")
+        raise ApiError(502, f"Mihomo node switch failed: HTTP {response.status_code} {mihomo_response_message(response, 240)}")
     try:
         body = response.json() if response.text else {}
     except Exception:
         body = {"text": response.text}
     return {"ok": True, "status": response.status_code, "body": body}
+
+
+def select_mihomo_node(node: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
+    proxy_name = str(node.get("proxy_name") or "").strip()
+    if not proxy_name:
+        raise ApiError(400, "Selected node has no generated Mihomo proxy name. Rebuild the config and refresh the page.")
+    if state is not None:
+        ensure_mihomo_config_contains(state, [proxy_name])
+    try:
+        return update_mihomo_selector(proxy_name)
+    except ApiError as exc:
+        if state is None or not is_proxy_not_exist_error(exc.message):
+            raise
+        ensure_mihomo_config_contains(state, [proxy_name], force_reload=True)
+        try:
+            return update_mihomo_selector(proxy_name)
+        except ApiError as retry_exc:
+            raise ApiError(
+                retry_exc.status,
+                f"{retry_exc.message}; config was reloaded but Mihomo still rejected proxy {proxy_name!r}.",
+            ) from retry_exc
 
 
 def public_system_proxy(state: dict[str, Any]) -> dict[str, Any]:
@@ -1002,14 +1198,17 @@ def build_mihomo_config(state: dict[str, Any]) -> tuple[dict[str, Any], list[dic
 
 
 def reload_core() -> dict[str, Any]:
-    response = mihomo_request(
-        "PUT",
-        "/configs",
-        json={"path": MIHOMO_CONFIG_IN_CORE, "force": True},
-        timeout=15,
-    )
+    try:
+        response = mihomo_request(
+            "PUT",
+            "/configs",
+            json={"path": MIHOMO_CONFIG_IN_CORE, "force": True},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Mihomo reload failed: {mihomo_unavailable_message(exc)}") from exc
     if response.status_code >= 400:
-        raise RuntimeError(f"Mihomo reload failed: HTTP {response.status_code} {response.text[:300]}")
+        raise RuntimeError(f"Mihomo reload failed: HTTP {response.status_code} {mihomo_response_message(response)}")
     try:
         body = response.json()
     except Exception:
@@ -1128,10 +1327,18 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         try:
+            # 健康检查不进 STATE_LOCK：watchdog 探针绝不能被耗时操作（如一键测速）
+            # 长期持锁堵死，否则探针超时会让 watchdog 误判进程已死而把它杀掉重启。
+            if method == "GET" and path == "/api/health":
+                self.send_json({"ok": True, "time": now_iso(), "core": core_status()})
+                return
+            # 一键测速自行管理锁粒度（耗时的网络测速阶段不持锁），不能放进下面的大锁，
+            # 否则会把 /api/state 等其它请求一起堵几十秒。
+            match = re.fullmatch(r"/api/subscriptions/([^/]+)/nodes/delay", path)
+            if method == "POST" and match:
+                self.test_nodes_delay(match.group(1))
+                return
             with STATE_LOCK:
-                if method == "GET" and path == "/api/health":
-                    self.send_json({"ok": True, "time": now_iso(), "core": core_status()})
-                    return
                 if method == "GET" and path == "/api/state":
                     self.send_json(public_state())
                     return
@@ -1141,10 +1348,6 @@ class ManagerHandler(SimpleHTTPRequestHandler):
                 match = re.fullmatch(r"/api/subscriptions/([^/]+)/nodes", path)
                 if method == "GET" and match:
                     self.list_nodes(match.group(1))
-                    return
-                match = re.fullmatch(r"/api/subscriptions/([^/]+)/nodes/delay", path)
-                if method == "POST" and match:
-                    self.test_nodes_delay(match.group(1))
                     return
                 match = re.fullmatch(r"/api/subscriptions/([^/]+)/refresh", path)
                 if method == "POST" and match:
@@ -1246,20 +1449,25 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "nodes": safe_nodes, "count": len(safe_nodes)})
 
     def test_nodes_delay(self, subscription_id: str) -> None:
-        state = load_state()
-        subscription = self.find_subscription(state, subscription_id)
-        if not subscription.get("enabled", True):
-            raise ApiError(400, "订阅已停用。")
         body = self.read_body_json()
         node_id = str(body.get("node_id") or "").strip()
-        nodes, _ = collect_nodes(state, only_enabled=True)
-        subscription_nodes_to_test = [node for node in nodes if node["subscription_id"] == subscription_id]
-        if node_id:
-            subscription_nodes_to_test = [node for node in subscription_nodes_to_test if node["id"] == node_id]
+        # 准备阶段（读 state、校验、必要时重建 mihomo 配置）短暂持锁；
+        # 真正耗时的并发网络测速放到锁外执行，避免长时间堵死 /api/state 等其它请求。
+        with STATE_LOCK:
+            state = load_state()
+            subscription = self.find_subscription(state, subscription_id)
+            if not subscription.get("enabled", True):
+                raise ApiError(400, "订阅已停用。")
+            nodes, _ = collect_nodes(state, only_enabled=True)
+            subscription_nodes_to_test = [node for node in nodes if node["subscription_id"] == subscription_id]
+            if node_id:
+                subscription_nodes_to_test = [node for node in subscription_nodes_to_test if node["id"] == node_id]
+                if not subscription_nodes_to_test:
+                    raise ApiError(404, "节点不存在或订阅已停用。")
             if not subscription_nodes_to_test:
-                raise ApiError(404, "节点不存在或订阅已停用。")
-        if not subscription_nodes_to_test:
-            raise ApiError(404, "没有可测速的节点。")
+                raise ApiError(404, "没有可测速的节点。")
+            ensure_mihomo_config_contains(state, [node["proxy_name"] for node in subscription_nodes_to_test])
+
         results = test_node_delays(subscription_nodes_to_test)
         ok_count = sum(1 for item in results if item.get("ok"))
         self.send_json(
@@ -1379,24 +1587,10 @@ class ManagerHandler(SimpleHTTPRequestHandler):
             raise ApiError(400, "端口必须是数字。")
         if not (PORT_MIN <= port <= PORT_MAX):
             raise ApiError(400, f"端口必须在 {PORT_MIN}-{PORT_MAX} 之间。")
-        target_url = str(body.get("url") or "https://ipinfo.io/json").strip()
+        target_url = str(body.get("url") or "").strip()
         proxies = {"http": f"http://{PORT_PROBE_PROXY_HOST}:{port}", "https": f"http://{PORT_PROBE_PROXY_HOST}:{port}"}
-        started = dt.datetime.now()
-        try:
-            response = requests.get(target_url, proxies=proxies, timeout=25)
-            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
-            self.send_json(
-                {
-                    "ok": response.ok,
-                    "status": response.status_code,
-                    "elapsed_ms": elapsed_ms,
-                    "body": response.text[:1200],
-                },
-                200 if response.ok else 502,
-            )
-        except requests.RequestException as exc:
-            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
-            self.send_json({"ok": False, "elapsed_ms": elapsed_ms, "error": str(exc)}, 502)
+        payload = probe_via_proxy(system_proxy_probe_urls(target_url), proxies)
+        self.send_json(payload, 200 if payload.get("ok") else 502)
 
     def get_system_proxy(self) -> None:
         state = load_state()
@@ -1460,7 +1654,7 @@ class ManagerHandler(SimpleHTTPRequestHandler):
 
         state = load_state()
         node = find_node_for_system_proxy(state, subscription_id, node_id)
-        switch_result = select_mihomo_node(node)
+        switch_result = select_mihomo_node(node, state)
         proxy_state = state.setdefault("system_proxy", empty_system_proxy_state())
         proxy_state["selected_subscription_id"] = node["subscription_id"]
         proxy_state["selected_node_id"] = node["id"]
@@ -1492,7 +1686,7 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         switch_result = None
         if enabled:
             selected_node = find_node_for_system_proxy(state, allow_first=True)
-            switch_result = select_mihomo_node(selected_node)
+            switch_result = select_mihomo_node(selected_node, state)
 
         proxy_state = normalize_system_proxy_state(state.setdefault("system_proxy", empty_system_proxy_state()))
         helper_result = update_helper_system_proxy(
@@ -1516,38 +1710,17 @@ class ManagerHandler(SimpleHTTPRequestHandler):
         )
 
     def probe_system_proxy(self) -> None:
-        target_url = SYSTEM_PROXY_TEST_URL
-        started = dt.datetime.now()
-        try:
-            response = requests.get(
-                target_url,
-                proxies={"http": SYSTEM_PROXY_TEST_PROXY, "https": SYSTEM_PROXY_TEST_PROXY},
-                timeout=25,
-            )
-            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
-            self.send_json(
-                {
-                    "ok": response.ok,
-                    "target_url": target_url,
-                    "proxy": SYSTEM_PROXY_TEST_PROXY,
-                    "status": response.status_code,
-                    "elapsed_ms": elapsed_ms,
-                    "body": response.text[:1200],
-                },
-                200 if response.ok else 502,
-            )
-        except requests.RequestException as exc:
-            elapsed_ms = int((dt.datetime.now() - started).total_seconds() * 1000)
-            self.send_json(
-                {
-                    "ok": False,
-                    "target_url": target_url,
-                    "proxy": SYSTEM_PROXY_TEST_PROXY,
-                    "elapsed_ms": elapsed_ms,
-                    "error": str(exc),
-                },
-                502,
-            )
+        body = self.read_body_json()
+        state = load_state()
+        selected_node = find_node_for_system_proxy(state)
+        switch_result = select_mihomo_node(selected_node, state)
+        target_url = str(body.get("url") or "").strip()
+        payload = probe_via_proxy(
+            system_proxy_probe_urls(target_url),
+            {"http": SYSTEM_PROXY_TEST_PROXY, "https": SYSTEM_PROXY_TEST_PROXY},
+        )
+        payload["switch"] = switch_result
+        self.send_json(payload, 200 if payload.get("ok") else 502)
 
     def do_GET(self) -> None:
         if self.path.startswith("/api/"):
@@ -1593,7 +1766,11 @@ class ManagerHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SUB_DIR.mkdir(parents=True, exist_ok=True)
-    load_state()
+    state = load_state()
+    try:
+        rebuild_and_reload(state)
+    except Exception as exc:
+        print(f"[manager] Initial Mihomo config sync failed: {exc}")
     server = ThreadingHTTPServer((MANAGER_HOST, MANAGER_PORT), ManagerHandler)
     print(f"Lite Node Gateway Manager listening on {MANAGER_HOST}:{MANAGER_PORT}")
     server.serve_forever()
